@@ -34,6 +34,19 @@ const villains = {
 
 type VillainKey = keyof typeof villains;
 
+type Challenge = {
+  title: string;
+  detail: string;
+  durationSeconds: number;
+  status: "offered" | "active";
+};
+
+const challengePool = [
+  { title: "Quick sprint", detail: "Pick up the pace for 30 seconds.", durationSeconds: 30 },
+  { title: "Steady push", detail: "Keep moving continuously for 60 seconds.", durationSeconds: 60 },
+  { title: "Form check", detail: "Relax your shoulders and take 10 controlled steps.", durationSeconds: 30 },
+];
+
 function distanceBetweenPoints(
   start: Location.LocationObjectCoords,
   end: Location.LocationObjectCoords,
@@ -63,6 +76,8 @@ export default function Index() {
   const [healthStatus, setHealthStatus] = useState("not-connected");
   const [selectedVillain, setSelectedVillain] = useState<VillainKey>("werewolf");
   const avatarMotion = useRef(new Animated.Value(0)).current;
+  const [challenge, setChallenge] = useState<Challenge | null>(null);
+  const [challengeSeconds, setChallengeSeconds] = useState(0);
   const subscription = useRef<Location.LocationSubscription | null>(null);
   const previousLocation = useRef<Location.LocationObjectCoords | null>(null);
   const startedAt = useRef<Date | null>(null);
@@ -95,6 +110,37 @@ export default function Index() {
     return () => animation.stop();
   }, [avatarMotion]);
 
+  useEffect(() => {
+    if (!isTracking || challenge) {
+      return;
+    }
+
+    const delay = (Math.floor(Math.random() * 16) + 20) * 1000;
+    const challengeTimer = setTimeout(() => {
+      const nextChallenge = challengePool[Math.floor(Math.random() * challengePool.length)];
+      setChallenge({ ...nextChallenge, status: "offered" });
+    }, delay);
+
+    return () => clearTimeout(challengeTimer);
+  }, [isTracking, challenge]);
+
+  useEffect(() => {
+    if (!challenge || challenge.status !== "active") {
+      return;
+    }
+
+    if (challengeSeconds <= 0) {
+      const completionTimer = setTimeout(() => setChallenge(null), 900);
+      return () => clearTimeout(completionTimer);
+    }
+
+    const countdownTimer = setTimeout(() => {
+      setChallengeSeconds((seconds) => seconds - 1);
+    }, 1000);
+
+    return () => clearTimeout(countdownTimer);
+  }, [challenge, challengeSeconds]);
+
   async function startTracking() {
     setIsLoading(true);
     setErrorMessage(null);
@@ -123,6 +169,8 @@ export default function Index() {
       startedAt.current = new Date();
       setDistance(0);
       setElapsedSeconds(0);
+      setChallenge(null);
+      setChallengeSeconds(0);
 
       subscription.current = await Location.watchPositionAsync(
         {
@@ -172,6 +220,8 @@ export default function Index() {
     startedAt.current = null;
     previousLocation.current = null;
     setIsTracking(false);
+    setChallenge(null);
+    setChallengeSeconds(0);
 
     if (workoutStart && workoutDistance > 0) {
       try {
@@ -190,6 +240,20 @@ export default function Index() {
     setElapsedSeconds(0);
     setAccuracy(null);
     setErrorMessage(null);
+  }
+
+  function acceptChallenge() {
+    if (!challenge) {
+      return;
+    }
+
+    setChallengeSeconds(challenge.durationSeconds);
+    setChallenge({ ...challenge, status: "active" });
+  }
+
+  function skipChallenge() {
+    setChallenge(null);
+    setChallengeSeconds(0);
   }
 
   const formattedDistance = (distance / 1000).toFixed(3);
@@ -385,6 +449,42 @@ export default function Index() {
           Tracking works while the app is open. Keep Location Services and Precise Location enabled for the most reliable measurement.
         </Text>
       </ScrollView>
+
+      {challenge && (
+        <View style={styles.challengeOverlay}>
+          <View style={styles.challengeCard}>
+            <Text style={styles.challengeEyebrow}>
+              {challenge.status === "active" ? "CHALLENGE IN PROGRESS" : "NEW CHALLENGE"}
+            </Text>
+            <Text style={styles.challengeTitle}>{challenge.title}</Text>
+            <Text style={styles.challengeDetail}>{challenge.detail}</Text>
+
+            {challenge.status === "active" ? (
+              <>
+                <Text style={styles.challengeCountdown}>{challengeSeconds}</Text>
+                <Text style={styles.challengeSecondsLabel}>SECONDS LEFT</Text>
+              </>
+            ) : (
+              <View style={styles.challengeActions}>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={skipChallenge}
+                  style={({ pressed }) => [styles.challengeSkipButton, pressed && styles.buttonPressed]}
+                >
+                  <Text style={styles.challengeSkipText}>SKIP</Text>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={acceptChallenge}
+                  style={({ pressed }) => [styles.challengeAcceptButton, pressed && styles.buttonPressed]}
+                >
+                  <Text style={styles.challengeAcceptText}>ACCEPT</Text>
+                </Pressable>
+              </View>
+            )}
+          </View>
+        </View>
+      )}
     </SafeAreaView>
   );
 }
@@ -714,6 +814,91 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 18,
     marginTop: 24,
+    textAlign: "center",
+  },
+  challengeOverlay: {
+    alignItems: "center",
+    backgroundColor: "rgba(16, 33, 29, 0.46)",
+    justifyContent: "center",
+    padding: 24,
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
+    top: 0,
+  },
+  challengeCard: {
+    backgroundColor: "#f3f0e8",
+    borderRadius: 18,
+    padding: 24,
+    width: "100%",
+  },
+  challengeEyebrow: {
+    color: "#de5c38",
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 1.3,
+  },
+  challengeTitle: {
+    color: "#10211d",
+    fontSize: 32,
+    fontWeight: "800",
+    lineHeight: 38,
+    marginTop: 12,
+  },
+  challengeDetail: {
+    color: "#5e6c66",
+    fontSize: 16,
+    lineHeight: 24,
+    marginTop: 8,
+  },
+  challengeActions: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 24,
+  },
+  challengeSkipButton: {
+    alignItems: "center",
+    borderColor: "#c9d1cb",
+    borderRadius: 10,
+    borderWidth: 1,
+    flex: 1,
+    justifyContent: "center",
+    minHeight: 52,
+  },
+  challengeSkipText: {
+    color: "#5e6c66",
+    fontSize: 12,
+    fontWeight: "800",
+    letterSpacing: 1,
+  },
+  challengeAcceptButton: {
+    alignItems: "center",
+    backgroundColor: "#f6c453",
+    borderRadius: 10,
+    flex: 1,
+    justifyContent: "center",
+    minHeight: 52,
+  },
+  challengeAcceptText: {
+    color: "#10211d",
+    fontSize: 12,
+    fontWeight: "800",
+    letterSpacing: 1,
+  },
+  challengeCountdown: {
+    color: "#10211d",
+    fontSize: 64,
+    fontWeight: "800",
+    lineHeight: 72,
+    marginTop: 24,
+    textAlign: "center",
+  },
+  challengeSecondsLabel: {
+    color: "#7b8981",
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 1.2,
     textAlign: "center",
   },
 });
