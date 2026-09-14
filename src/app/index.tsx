@@ -17,19 +17,59 @@ const metersPerMile = 1609.344;
 const feetPerMeter = 3.28084;
 const maximumAcceptedAccuracy = 100;
 const maximumAcceptedSegment = 50;
-const avatarCustomization = {
-  seed: "questtfit-runner",
-  skinColor: "edb98a",
-  hairColor: "2c1b18",
-  clothingColor: "de5c38",
-  backgroundColor: "f6c453",
-};
+const avatarProfiles = {
+  sprinter: {
+    label: "SPRINTER",
+    seed: "questtfit-sprinter",
+    skinColor: "edb98a",
+    hairColor: "2c1b18",
+    clothingColor: "de5c38",
+    backgroundColor: "f6c453",
+    runner: "🏃",
+  },
+  trailblazer: {
+    label: "TRAILBLAZER",
+    seed: "questtfit-trailblazer",
+    skinColor: "9e5622",
+    hairColor: "4a312c",
+    clothingColor: "7bd6a7",
+    backgroundColor: "d9f0e2",
+    runner: "🏃🏻",
+  },
+  nightRunner: {
+    label: "NIGHT RUNNER",
+    seed: "questtfit-night-runner",
+    skinColor: "614335",
+    hairColor: "111827",
+    clothingColor: "7c3aed",
+    backgroundColor: "eadcff",
+    runner: "🏃🏿",
+  },
+} as const;
 
-const avatarUrl = `https://api.dicebear.com/9.x/avataaars/png?size=96&seed=${avatarCustomization.seed}&skinColor=${avatarCustomization.skinColor}&hairColor=${avatarCustomization.hairColor}&clothingColor=${avatarCustomization.clothingColor}&backgroundColor=${avatarCustomization.backgroundColor}`;
+type AvatarProfileKey = keyof typeof avatarProfiles;
 const villains = {
-  werewolf: { label: "WEREWOLF", seed: "moon-werewolf", color: "6b7280", background: "d9f0e2" },
-  witch: { label: "WITCH", seed: "night-witch", color: "7c3aed", background: "eadcff" },
-  vampire: { label: "VAMPIRE", seed: "crimson-vampire", color: "991b1b", background: "f9dede" },
+  werewolf: {
+    label: "WEREWOLF",
+    seed: "moon-werewolf",
+    color: "6b7280",
+    background: "d9f0e2",
+    image: require("../../assets/images/werewolf.png"),
+  },
+  witch: {
+    label: "WITCH",
+    seed: "night-witch",
+    color: "7c3aed",
+    background: "eadcff",
+    image: require("../../assets/images/witch.png"),
+  },
+  vampire: {
+    label: "VAMPIRE",
+    seed: "crimson-vampire",
+    color: "991b1b",
+    background: "f9dede",
+    image: require("../../assets/images/vampire.png"),
+  },
 } as const;
 
 type VillainKey = keyof typeof villains;
@@ -62,6 +102,7 @@ export default function Index() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [healthStatus, setHealthStatus] = useState("not-connected");
   const [selectedVillain, setSelectedVillain] = useState<VillainKey>("werewolf");
+  const [selectedAvatar, setSelectedAvatar] = useState<AvatarProfileKey>("sprinter");
   const avatarMotion = useRef(new Animated.Value(0)).current;
   const subscription = useRef<Location.LocationSubscription | null>(null);
   const previousLocation = useRef<Location.LocationObjectCoords | null>(null);
@@ -212,8 +253,10 @@ export default function Index() {
   const progressWidth = `${progressPercent}%` as `${number}%`;
   const villainProgressPercent = Math.max(progressPercent - 18, 0);
   const villainProgressWidth = `${villainProgressPercent}%` as `${number}%`;
+  const selectedAvatarConfig = avatarProfiles[selectedAvatar];
+  const avatarUrl = `https://api.dicebear.com/9.x/avataaars/png?size=96&seed=${selectedAvatarConfig.seed}&skinColor=${selectedAvatarConfig.skinColor}&hairColor=${selectedAvatarConfig.hairColor}&clothingColor=${selectedAvatarConfig.clothingColor}&backgroundColor=${selectedAvatarConfig.backgroundColor}`;
   const selectedVillainConfig = villains[selectedVillain];
-  const villainUrl = `https://api.dicebear.com/9.x/adventurer/png?size=96&seed=${selectedVillainConfig.seed}&backgroundColor=${selectedVillainConfig.background}&hairColor=${selectedVillainConfig.color}`;
+  const villainUrl = selectedVillainConfig.image ?? `https://api.dicebear.com/9.x/adventurer/png?size=96&seed=${selectedVillainConfig.seed}&backgroundColor=${selectedVillainConfig.background}&hairColor=${selectedVillainConfig.color}`;
   const currentMileageLabel = `${totalMiles.toFixed(1)} mi`;
   const currentLevelLabel = `${currentThreshold.toFixed(1)} mi`;
   const nextLevelLabel = `${nextThreshold.toFixed(1)} mi`;
@@ -276,7 +319,7 @@ export default function Index() {
             </View>
             <Animated.View
               style={[
-                styles.avatarMarker,
+                styles.runnerMarker,
                 { left: progressWidth },
                 {
                   transform: [
@@ -286,14 +329,9 @@ export default function Index() {
                 },
               ]}
             >
-              <Image
-                accessibilityLabel="Your customized running QuesttFit avatar"
-                cachePolicy="disk"
-                contentFit="cover"
-                source={avatarUrl}
-                style={styles.markerImage}
-                transition={250}
-              />
+              <Text accessibilityLabel={`${selectedAvatarConfig.label} running`} style={styles.runnerGlyph}>
+                {selectedAvatarConfig.runner}
+              </Text>
             </Animated.View>
             <View style={styles.progressTrack}>
               <View style={[styles.progressFill, { width: progressWidth }]} />
@@ -314,7 +352,7 @@ export default function Index() {
             {(Object.keys(villains) as VillainKey[]).map((villainKey) => {
               const villain = villains[villainKey];
               const isSelected = villainKey === selectedVillain;
-              const choiceUrl = `https://api.dicebear.com/9.x/adventurer/png?size=72&seed=${villain.seed}&backgroundColor=${villain.background}&hairColor=${villain.color}`;
+              const choiceUrl = villain.image ?? `https://api.dicebear.com/9.x/adventurer/png?size=72&seed=${villain.seed}&backgroundColor=${villain.background}&hairColor=${villain.color}`;
 
               return (
                 <Pressable
@@ -327,6 +365,44 @@ export default function Index() {
                   <Image source={choiceUrl} style={styles.villainChoiceImage} contentFit="cover" />
                   <Text style={[styles.villainChoiceLabel, isSelected && styles.villainChoiceLabelSelected]}>
                     {villain.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        </View>
+
+        <View style={styles.avatarTile}>
+          <View style={styles.avatarTileHeader}>
+            <View>
+              <Text style={styles.avatarTileLabel}>CUSTOMIZE YOUR AVATAR</Text>
+              <Text style={styles.avatarTileTitle}>{selectedAvatarConfig.label}</Text>
+            </View>
+            <Image
+              accessibilityLabel={`${selectedAvatarConfig.label} avatar preview`}
+              cachePolicy="disk"
+              contentFit="cover"
+              source={avatarUrl}
+              style={styles.avatarPreview}
+              transition={250}
+            />
+          </View>
+          <View style={styles.avatarChoices}>
+            {(Object.keys(avatarProfiles) as AvatarProfileKey[]).map((avatarKey) => {
+              const avatar = avatarProfiles[avatarKey];
+              const isSelected = avatarKey === selectedAvatar;
+
+              return (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: isSelected }}
+                  key={avatarKey}
+                  onPress={() => setSelectedAvatar(avatarKey)}
+                  style={[styles.avatarChoice, isSelected && styles.avatarChoiceSelected]}
+                >
+                  <Text style={styles.avatarChoiceRunner}>{avatar.runner}</Text>
+                  <Text style={[styles.avatarChoiceLabel, isSelected && styles.avatarChoiceLabelSelected]}>
+                    {avatar.label}
                   </Text>
                 </Pressable>
               );
@@ -517,6 +593,21 @@ const styles = StyleSheet.create({
     position: "absolute",
     width: 46,
     zIndex: 2,
+    
+  },
+  runnerMarker: {
+    alignItems: "center",
+    height: 44,
+    justifyContent: "center",
+    marginLeft: -22,
+    position: "absolute",
+    width: 44,
+    zIndex: 2,
+  },
+  runnerGlyph: {
+    fontSize: 30,
+    lineHeight: 38,
+    transform: [{scaleX: -1}],
   },
   chaserMarker: {
     backgroundColor: "#ffffff",
@@ -611,6 +702,71 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   villainChoiceLabelSelected: {
+    color: "#10211d",
+  },
+  avatarTile: {
+    backgroundColor: "#ffffff",
+    borderRadius: 14,
+    marginTop: 12,
+    padding: 16,
+  },
+  avatarTileHeader: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+  },
+  avatarTileLabel: {
+    color: "#de5c38",
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 1.2,
+  },
+  avatarTileTitle: {
+    color: "#10211d",
+    fontSize: 15,
+    fontWeight: "800",
+    marginTop: 5,
+  },
+  avatarPreview: {
+    backgroundColor: "#f3f0e8",
+    borderRadius: 24,
+    height: 48,
+    width: 48,
+  },
+  avatarChoices: {
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 14,
+  },
+  avatarChoice: {
+    alignItems: "center",
+    backgroundColor: "#f3f0e8",
+    borderColor: "#ebe6dc",
+    borderRadius: 10,
+    borderWidth: 1,
+    flex: 1,
+    minHeight: 70,
+    paddingHorizontal: 4,
+    paddingVertical: 7,
+  },
+  avatarChoiceSelected: {
+    backgroundColor: "#f6c453",
+    borderColor: "#de5c38",
+  },
+  avatarChoiceRunner: {
+    fontSize: 27,
+    lineHeight: 34,
+    transform: [{scaleX: -1}],
+  },
+  avatarChoiceLabel: {
+    color: "#5e6c66",
+    fontSize: 9,
+    fontWeight: "800",
+    letterSpacing: 0.3,
+    marginTop: 2,
+    textAlign: "center",
+  },
+  avatarChoiceLabelSelected: {
     color: "#10211d",
   },
   statsRow: {
