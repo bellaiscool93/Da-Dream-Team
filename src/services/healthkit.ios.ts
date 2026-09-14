@@ -47,7 +47,7 @@ export async function saveWorkoutToHealth(
     AppleHealthKit.saveWorkout(
       {
         ...dateOptions,
-        type: "Running",
+        type: AppleHealthKit.Constants.Activities.Running,
       },
       (error) => {
         if (error) {
@@ -62,7 +62,7 @@ export async function saveWorkoutToHealth(
   const distanceOptions: HealthValueOptions = {
     ...dateOptions,
     value: distanceMeters,
-    unit: "meter",
+    unit: AppleHealthKit.Constants.Units.meter,
   };
 
   await callHealthKit<void>((resolve, reject) => {

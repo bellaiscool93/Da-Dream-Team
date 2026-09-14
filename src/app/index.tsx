@@ -145,7 +145,25 @@ export default function Index() {
   }
 
   const formattedDistance = (distance / 1000).toFixed(2);
-  const formattedMiles = (distance / metersPerMile).toFixed(2);
+  const totalMiles = distance / metersPerMile;
+  const formattedMiles = totalMiles.toFixed(2);
+  const getLevelThreshold = (level: number) => (level * (level + 1)) / 2;
+
+  let currentLevel = 0;
+  while (getLevelThreshold(currentLevel + 1) <= totalMiles) {
+    currentLevel += 1;
+  }
+
+  const currentThreshold = getLevelThreshold(currentLevel);
+  const nextLevel = currentLevel + 1;
+  const nextThreshold = getLevelThreshold(nextLevel);
+  const levelProgress =
+    nextThreshold === currentThreshold ? 0 : (totalMiles - currentThreshold) / (nextThreshold - currentThreshold);
+  const progressPercent = Math.min(Math.max(Math.round(levelProgress * 100), 0), 100);
+  const progressWidth = `${progressPercent}%` as `${number}%`;
+  const currentMileageLabel = `${totalMiles.toFixed(1)} mi`;
+  const currentLevelLabel = `${currentThreshold.toFixed(1)} mi`;
+  const nextLevelLabel = `${nextThreshold.toFixed(1)} mi`;
   const formattedTime = `${String(Math.floor(elapsedSeconds / 60)).padStart(2, "0")}:${String(
     elapsedSeconds % 60,
   ).padStart(2, "0")}`;
@@ -179,6 +197,23 @@ export default function Index() {
           <Text style={styles.distanceValue}>{formattedDistance}</Text>
           <Text style={styles.distanceUnit}>KILOMETERS</Text>
           <Text style={styles.secondaryDistance}>{formattedMiles} miles</Text>
+        </View>
+
+        <View style={styles.levelProgressCard}>
+          <View style={styles.levelProgressMeta}>
+            <View style={styles.levelProgressSide}>
+              <Text style={styles.levelProgressLabel}>lvl.{currentLevel}</Text>
+              <Text style={styles.levelProgressSubLabel}>{currentLevelLabel}</Text>
+            </View>
+            <View style={styles.levelProgressSide}>
+              <Text style={styles.levelProgressLabel}>lvl.{nextLevel}</Text>
+              <Text style={styles.levelProgressSubLabel}>{nextLevelLabel}</Text>
+            </View>
+          </View>
+          <View style={styles.progressTrack}>
+            <View style={[styles.progressFill, { width: progressWidth }]} />
+          </View>
+          <Text style={styles.levelProgressReadout}>{currentMileageLabel} / {nextLevelLabel}</Text>
         </View>
 
         <View style={styles.statsRow}>
@@ -313,6 +348,49 @@ const styles = StyleSheet.create({
     color: "#9ea9a1",
     fontSize: 15,
     marginTop: 8,
+  },
+  levelProgressCard: {
+    backgroundColor: "#ffffff",
+    borderRadius: 14,
+    marginTop: 12,
+    padding: 16,
+  },
+  levelProgressMeta: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 10,
+  },
+  levelProgressSide: {
+    alignItems: "flex-start",
+  },
+  levelProgressLabel: {
+    color: "#10211d",
+    fontSize: 13,
+    fontWeight: "800",
+    letterSpacing: 1,
+  },
+  levelProgressSubLabel: {
+    color: "#7b8981",
+    fontSize: 12,
+    marginTop: 4,
+  },
+  progressTrack: {
+    backgroundColor: "#ebe6dc",
+    borderRadius: 999,
+    height: 12,
+    overflow: "hidden",
+  },
+  progressFill: {
+    backgroundColor: "#de5c38",
+    borderRadius: 999,
+    height: "100%",
+  },
+  levelProgressReadout: {
+    color: "#10211d",
+    fontSize: 12,
+    fontWeight: "800",
+    marginTop: 10,
+    textAlign: "center",
   },
   statsRow: {
     flexDirection: "row",
