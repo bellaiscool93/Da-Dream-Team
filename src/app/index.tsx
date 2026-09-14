@@ -12,6 +12,9 @@ import {
 import { requestHealthPermissions, saveWorkoutToHealth } from "../services/healthkit";
 
 const metersPerMile = 1609.344;
+const feetPerMeter = 3.28084;
+const maximumAcceptedAccuracy = 100;
+const maximumAcceptedSegment = 50;
 
 function distanceBetweenPoints(
   start: Location.LocationObjectCoords,
@@ -65,9 +68,6 @@ export default function Index() {
     setErrorMessage(null);
 
     try {
-      const healthAvailable = await requestHealthPermissions();
-      setHealthStatus(healthAvailable ? "connected" : "not-supported");
-
       const permission = await Location.requestForegroundPermissionsAsync();
       if (!permission.granted) {
         setErrorMessage("Location access is needed to measure your workout.");
@@ -80,6 +80,13 @@ export default function Index() {
         return;
       }
 
+      try {
+        const healthAvailable = await requestHealthPermissions();
+        setHealthStatus(healthAvailable ? "connected" : "not-supported");
+      } catch {
+        setHealthStatus("not-supported");
+      }
+
       previousLocation.current = null;
       startedAt.current = new Date();
       setDistance(0);
@@ -88,20 +95,29 @@ export default function Index() {
       subscription.current = await Location.watchPositionAsync(
         {
           accuracy: Location.Accuracy.High,
-          distanceInterval: 5,
+          distanceInterval: 1,
         },
         (location) => {
           const { coords } = location;
           setAccuracy(coords.accuracy);
 
-          if (coords.accuracy !== null && coords.accuracy <= 100) {
-            if (previousLocation.current) {
-              setDistance((currentDistance) =>
-                currentDistance + distanceBetweenPoints(previousLocation.current!, coords),
-              );
-            }
-            previousLocation.current = coords;
+          const currentAccuracy = coords.accuracy;
+          const usableAccuracy =
+            currentAccuracy !== null && currentAccuracy <= maximumAcceptedAccuracy;
+
+          if (!usableAccuracy) {
+            return;
           }
+
+          if (previousLocation.current) {
+            const segmentDistance = distanceBetweenPoints(previousLocation.current, coords);
+
+            if (segmentDistance >= 1 && segmentDistance <= maximumAcceptedSegment) {
+              setDistance((currentDistance) => currentDistance + segmentDistance);
+            }
+          }
+
+          previousLocation.current = coords;
         },
         (reason) => setErrorMessage(reason),
       );
@@ -144,9 +160,10 @@ export default function Index() {
     setErrorMessage(null);
   }
 
-  const formattedDistance = (distance / 1000).toFixed(2);
+  const formattedDistance = (distance / 1000).toFixed(3);
   const totalMiles = distance / metersPerMile;
   const formattedMiles = totalMiles.toFixed(2);
+  const formattedFeet = Math.round(distance * feetPerMeter);
   const getLevelThreshold = (level: number) => (level * (level + 1)) / 2;
 
   let currentLevel = 0;
@@ -196,7 +213,7 @@ export default function Index() {
           </View>
           <Text style={styles.distanceValue}>{formattedDistance}</Text>
           <Text style={styles.distanceUnit}>KILOMETERS</Text>
-          <Text style={styles.secondaryDistance}>{formattedMiles} miles</Text>
+          <Text style={styles.secondaryDistance}>{formattedFeet} feet · {formattedMiles} miles</Text>
         </View>
 
         <View style={styles.levelProgressCard}>
@@ -233,7 +250,9 @@ export default function Index() {
           </View>
           <View style={styles.healthCopy}>
             <Text style={styles.healthTitle}>{healthStatusText}</Text>
-            <Text style={styles.healthSubtitle}>Workout distance will sync when you stop.</Text>
+            <Text style={styles.healthSubtitle}>
+              {isTracking ? "Workout distance will save when you pause." : "Pause after moving to save this workout."}
+            </Text>
           </View>
         </View>
 
