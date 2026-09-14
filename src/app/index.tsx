@@ -1,3 +1,4 @@
+import { setAudioModeAsync, useAudioPlayer } from "expo-audio";
 import { Image } from "expo-image";
 import * as Location from "expo-location";
 import { useEffect, useRef, useState } from "react";
@@ -11,6 +12,7 @@ import {
   Text,
   View,
 } from "react-native";
+import { chaserSounds } from "../../assets/sounds";
 import { requestHealthPermissions, saveWorkoutToHealth } from "../services/healthkit";
 
 const metersPerMile = 1609.344;
@@ -34,10 +36,26 @@ const villains = {
 
 type VillainKey = keyof typeof villains;
 
-function distanceBetweenPoints(
-  start: Location.LocationObjectCoords,
-  end: Location.LocationObjectCoords,
-) {
+type Challenge = {
+  title: string;
+  detail: string;
+  durationSeconds: number;
+  status: "offered" | "active";
+};
+
+type LocationLike = {
+  latitude: number;
+  longitude: number;
+  accuracy?: number | null;
+};
+
+const challengePool = [
+  { title: "Quick sprint", detail: "Pick up the pace for 30 seconds.", durationSeconds: 30 },
+  { title: "Steady push", detail: "Keep moving continuously for 60 seconds.", durationSeconds: 60 },
+  { title: "Form check", detail: "Relax your shoulders and take 10 controlled steps.", durationSeconds: 30 },
+];
+
+function distanceBetweenPoints(start: LocationLike, end: LocationLike) {
   const earthRadius = 6371000;
   const latitudeDelta = ((end.latitude - start.latitude) * Math.PI) / 180;
   const longitudeDelta = ((end.longitude - start.longitude) * Math.PI) / 180;
@@ -63,8 +81,12 @@ export default function Index() {
   const [healthStatus, setHealthStatus] = useState("not-connected");
   const [selectedVillain, setSelectedVillain] = useState<VillainKey>("werewolf");
   const avatarMotion = useRef(new Animated.Value(0)).current;
+  const [challenge, setChallenge] = useState<Challenge | null>(null);
+  const [challengeSeconds, setChallengeSeconds] = useState(0);
+  const eventAudioPlayer = useAudioPlayer(null);
   const subscription = useRef<Location.LocationSubscription | null>(null);
-  const previousLocation = useRef<Location.LocationObjectCoords | null>(null);
+  const webLocationWatchId = useRef<number | null>(null);
+  const previousLocation = useRef<LocationLike | null>(null);
   const startedAt = useRef<Date | null>(null);
 
   useEffect(() => {
@@ -80,7 +102,12 @@ export default function Index() {
   }, [isTracking]);
 
   useEffect(() => {
-    return () => subscription.current?.remove();
+    return () => {
+      subscription.current?.remove();
+      if (typeof navigator !== "undefined" && "geolocation" in navigator && webLocationWatchId.current !== null) {
+        navigator.geolocation.clearWatch(webLocationWatchId.current);
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -95,6 +122,56 @@ export default function Index() {
     return () => animation.stop();
   }, [avatarMotion]);
 
+  useEffect(() => {
+    void setAudioModeAsync({
+      playsInSilentMode: true,
+      interruptionMode: "mixWithOthers",
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!challenge || challenge.status !== "offered") {
+      return;
+    }
+
+    const soundSource = chaserSounds[selectedVillain];
+    if (soundSource !== null) {
+      eventAudioPlayer.replace(soundSource);
+      eventAudioPlayer.play();
+    }
+  }, [challenge, eventAudioPlayer, selectedVillain]);
+
+  useEffect(() => {
+    if (!isTracking || challenge) {
+      return;
+    }
+
+    const delay = (Math.floor(Math.random() * 16) + 20) * 1000;
+    const challengeTimer = setTimeout(() => {
+      const nextChallenge = challengePool[Math.floor(Math.random() * challengePool.length)];
+      setChallenge({ ...nextChallenge, status: "offered" });
+    }, delay);
+
+    return () => clearTimeout(challengeTimer);
+  }, [isTracking, challenge]);
+
+  useEffect(() => {
+    if (!challenge || challenge.status !== "active") {
+      return;
+    }
+
+    if (challengeSeconds <= 0) {
+      const completionTimer = setTimeout(() => setChallenge(null), 900);
+      return () => clearTimeout(completionTimer);
+    }
+
+    const countdownTimer = setTimeout(() => {
+      setChallengeSeconds((seconds) => seconds - 1);
+    }, 1000);
+
+    return () => clearTimeout(countdownTimer);
+  }, [challenge, challengeSeconds]);
+
   async function startTracking() {
     setIsLoading(true);
     setErrorMessage(null);
@@ -106,10 +183,13 @@ export default function Index() {
         return;
       }
 
-      const servicesEnabled = await Location.hasServicesEnabledAsync();
-      if (!servicesEnabled) {
-        setErrorMessage("Turn on Location Services in Settings, then try again.");
-        return;
+      if (typeof Location.hasServicesEnabledAsync === "function") {
+        const servicesEnabled = await Location.hasServicesEnabledAsync();
+
+        if (!servicesEnabled) {
+          setErrorMessage("Turn on Location Services in Settings, then try again.");
+          return;
+        }
       }
 
       try {
@@ -123,36 +203,50 @@ export default function Index() {
       startedAt.current = new Date();
       setDistance(0);
       setElapsedSeconds(0);
+      setChallenge(null);
+      setChallengeSeconds(0);
 
-      subscription.current = await Location.watchPositionAsync(
-        {
-          accuracy: Location.Accuracy.High,
-          distanceInterval: 1,
-        },
-        (location) => {
-          const { coords } = location;
-          setAccuracy(coords.accuracy);
+      const handleLocationUpdate = (coords: LocationLike) => {
+        setAccuracy(coords.accuracy ?? null);
 
-          const currentAccuracy = coords.accuracy;
-          const usableAccuracy =
-            currentAccuracy !== null && currentAccuracy <= maximumAcceptedAccuracy;
+        const currentAccuracy = coords.accuracy;
+        const usableAccuracy = currentAccuracy !== null && currentAccuracy !== undefined && currentAccuracy <= maximumAcceptedAccuracy;
 
-          if (!usableAccuracy) {
-            return;
+        if (!usableAccuracy) {
+          return;
+        }
+
+        if (previousLocation.current) {
+          const segmentDistance = distanceBetweenPoints(previousLocation.current, coords);
+
+          if (segmentDistance >= 1 && segmentDistance <= maximumAcceptedSegment) {
+            setDistance((currentDistance) => currentDistance + segmentDistance);
           }
+        }
 
-          if (previousLocation.current) {
-            const segmentDistance = distanceBetweenPoints(previousLocation.current, coords);
+        previousLocation.current = coords;
+      };
 
-            if (segmentDistance >= 1 && segmentDistance <= maximumAcceptedSegment) {
-              setDistance((currentDistance) => currentDistance + segmentDistance);
-            }
-          }
-
-          previousLocation.current = coords;
-        },
-        (reason) => setErrorMessage(reason),
-      );
+      try {
+        subscription.current = await Location.watchPositionAsync(
+          {
+            accuracy: Location.Accuracy.High,
+            distanceInterval: 5,
+          },
+          (location) => handleLocationUpdate(location.coords),
+          (reason) => setErrorMessage(reason),
+        );
+      } catch {
+        if (typeof navigator !== "undefined" && "geolocation" in navigator) {
+          webLocationWatchId.current = navigator.geolocation.watchPosition(
+            (position) => handleLocationUpdate(position.coords),
+            () => setErrorMessage("The browser could not access your GPS location."),
+            { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 },
+          );
+        } else {
+          throw new Error("Location tracking is unavailable on this device.");
+        }
+      }
 
       setIsTracking(true);
     } catch {
@@ -169,6 +263,12 @@ export default function Index() {
 
     subscription.current?.remove();
     subscription.current = null;
+
+    if (typeof navigator !== "undefined" && "geolocation" in navigator && webLocationWatchId.current !== null) {
+      navigator.geolocation.clearWatch(webLocationWatchId.current);
+      webLocationWatchId.current = null;
+    }
+
     startedAt.current = null;
     previousLocation.current = null;
     setIsTracking(false);
