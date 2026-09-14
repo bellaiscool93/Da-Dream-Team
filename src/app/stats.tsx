@@ -147,7 +147,7 @@ export default function Stats() {
                   />
                 ))}
                 {plotPoints.map((point) => (
-                  <Pressable accessibilityLabel={`${point.miles.toFixed(2)} miles`} key={point.dateKey} onPress={() => setSelectedPoint(point.dateKey)} style={[styles.chartPointButton, { left: point.x - 12, top: point.y - 12 }]}>
+                  <Pressable accessibilityLabel={`${point.miles.toFixed(2)} miles`} key={point.dateKey} onPress={() => setSelectedPoint(point.dateKey)} style={[styles.chartPointButton, { left: point.x - 22, top: point.y - 22 }]}>
                     <View style={styles.chartPoint} />
                   </Pressable>
                 ))}
@@ -360,13 +360,15 @@ const styles = StyleSheet.create({
     borderRadius: 5,
     borderWidth: 2,
     height: 10,
-    position: "absolute",
+    position: "relative",
     width: 10,
   },
   chartPointButton: {
     alignItems: "center",
+    justifyContent: "center",
+    height: 44,
     position: "absolute",
-    width: 24,
+    width: 44,
   },
   pointValue: {
     color: "#e1f2ca",

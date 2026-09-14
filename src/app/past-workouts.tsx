@@ -4,6 +4,7 @@ import {
     ImageBackground,
     Modal,
     Pressable,
+    Alert,
     SafeAreaView,
     ScrollView,
     StyleSheet,
@@ -11,7 +12,7 @@ import {
     TextInput,
     View,
 } from "react-native";
-import { getWorkoutHistory, WorkoutRecord } from "../services/distanceStats";
+import { deleteWorkout, getWorkoutHistory, WorkoutRecord } from "../services/distanceStats";
 
 function formatDuration(seconds: number) {
   return `${Math.floor(seconds / 60)}m ${String(Math.round(seconds % 60)).padStart(2, "0")}s`;
@@ -53,6 +54,19 @@ export default function PastWorkouts() {
     return searchDate.includes(dateQuery.toLowerCase()) || monthDay.includes(dateQuery.toLowerCase());
   });
   const visibleHistory = (showAll ? filteredHistory : filteredHistory.slice(0, 5));
+
+  function confirmDelete(workoutId: string) {
+    Alert.alert("Delete workout?", "This workout will be removed from your history.", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Delete",
+        style: "destructive",
+        onPress: () => {
+          void deleteWorkout(workoutId).then(() => getWorkoutHistory().then(setWorkoutHistory));
+        },
+      },
+    ]);
+  }
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -117,6 +131,9 @@ export default function PastWorkouts() {
                       <Text style={styles.historyValue}>{formatDuration(workout.durationSeconds)}</Text>
                       <Text style={styles.historyLabel}>TIME</Text>
                     </View>
+                    <Pressable accessibilityLabel="Delete workout" onPress={() => confirmDelete(workout.id)} style={styles.deleteButton}>
+                      <Text style={styles.deleteButtonText}>×</Text>
+                    </Pressable>
                   </View>
                 ))
               )}
@@ -162,6 +179,9 @@ export default function PastWorkouts() {
                       <Text style={styles.historyValue}>{formatDuration(workout.durationSeconds)}</Text>
                       <Text style={styles.historyLabel}>TIME</Text>
                     </View>
+                    <Pressable accessibilityLabel="Delete workout" onPress={() => confirmDelete(workout.id)} style={styles.deleteButton}>
+                      <Text style={styles.deleteButtonText}>×</Text>
+                    </Pressable>
                   </View>
                 ))
               )}
@@ -213,6 +233,8 @@ const styles = StyleSheet.create({
   historyMetric: { alignItems: "flex-end", marginLeft: 12 },
   historyValue: { color: "#ffffff", fontSize: 12, fontWeight: "800" },
   historyLabel: { color: "rgba(235, 245, 239, 0.48)", fontSize: 8, fontWeight: "800", letterSpacing: 0.8, marginTop: 3 },
+  deleteButton: { alignItems: "center", height: 36, justifyContent: "center", marginLeft: 8, width: 30 },
+  deleteButtonText: { color: "#f08a72", fontSize: 24, fontWeight: "300" },
   modalOverlay: { backgroundColor: "rgba(3, 8, 6, 0.82)", flex: 1, justifyContent: "flex-end" },
   modalCard: { backgroundColor: "#17231f", borderColor: "rgba(220, 241, 197, 0.34)", borderRadius: 24, borderWidth: 1, maxHeight: "86%", padding: 18 },
   closeButton: { borderColor: "rgba(235, 245, 239, 0.20)", borderRadius: 12, borderWidth: 1, paddingHorizontal: 10, paddingVertical: 7 },

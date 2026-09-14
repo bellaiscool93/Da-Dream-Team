@@ -915,6 +915,7 @@ export default function Index() {
                       <Pressable key={villainKey} onPress={() => { setSelectedVillain(villainKey); setShowChaserPicker(false); }} style={styles.pickerChoice}>
                         <Image source={choiceUrl} style={styles.pickerChoiceImage} contentFit="cover" />
                         <Text style={[styles.pickerChoiceLabel, isSelected && styles.pickerChoiceSelected]}>{villain.label}</Text>
+                        <Text style={styles.pickerChoiceDifficulty}>{villain.difficulty}</Text>
                       </Pressable>
                     );
                   })}
@@ -1904,6 +1905,13 @@ const styles = StyleSheet.create({
   },
   pickerChoiceSelected: {
     color: "#c8e8a1",
+  },
+  pickerChoiceDifficulty: {
+    color: "rgba(235, 245, 239, 0.58)",
+    fontSize: 8,
+    fontWeight: "800",
+    letterSpacing: 0.8,
+    marginTop: 3,
   },
   avatarPickerChoices: {
     flexDirection: "row",

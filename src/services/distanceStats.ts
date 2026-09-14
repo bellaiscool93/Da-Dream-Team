@@ -122,6 +122,16 @@ export async function getWorkoutHistory() {
   return readWorkoutHistory();
 }
 
+export function deleteWorkout(workoutId: string) {
+  writeQueue = writeQueue.then(async () => {
+    const history = await readWorkoutHistory();
+    const nextHistory = history.filter((workout) => workout.id !== workoutId);
+    await AsyncStorage.setItem(workoutHistoryKey, JSON.stringify(nextHistory));
+  });
+
+  return writeQueue;
+}
+
 export async function getCurrentWeekWorkoutMeters() {
   const history = await readWorkoutHistory();
   const today = new Date();
