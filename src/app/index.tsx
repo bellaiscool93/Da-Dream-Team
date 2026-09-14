@@ -1,7 +1,9 @@
+import { Image } from "expo-image";
 import * as Location from "expo-location";
 import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Animated,
   Pressable,
   SafeAreaView,
   ScrollView,
@@ -15,6 +17,22 @@ const metersPerMile = 1609.344;
 const feetPerMeter = 3.28084;
 const maximumAcceptedAccuracy = 100;
 const maximumAcceptedSegment = 50;
+const avatarCustomization = {
+  seed: "questtfit-runner",
+  skinColor: "edb98a",
+  hairColor: "2c1b18",
+  clothingColor: "de5c38",
+  backgroundColor: "f6c453",
+};
+
+const avatarUrl = `https://api.dicebear.com/9.x/avataaars/png?size=96&seed=${avatarCustomization.seed}&skinColor=${avatarCustomization.skinColor}&hairColor=${avatarCustomization.hairColor}&clothingColor=${avatarCustomization.clothingColor}&backgroundColor=${avatarCustomization.backgroundColor}`;
+const villains = {
+  werewolf: { label: "WEREWOLF", seed: "moon-werewolf", color: "6b7280", background: "d9f0e2" },
+  witch: { label: "WITCH", seed: "night-witch", color: "7c3aed", background: "eadcff" },
+  vampire: { label: "VAMPIRE", seed: "crimson-vampire", color: "991b1b", background: "f9dede" },
+} as const;
+
+type VillainKey = keyof typeof villains;
 
 function distanceBetweenPoints(
   start: Location.LocationObjectCoords,
@@ -43,6 +61,8 @@ export default function Index() {
   const [accuracy, setAccuracy] = useState<number | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [healthStatus, setHealthStatus] = useState("not-connected");
+  const [selectedVillain, setSelectedVillain] = useState<VillainKey>("werewolf");
+  const avatarMotion = useRef(new Animated.Value(0)).current;
   const subscription = useRef<Location.LocationSubscription | null>(null);
   const previousLocation = useRef<Location.LocationObjectCoords | null>(null);
   const startedAt = useRef<Date | null>(null);
@@ -62,6 +82,18 @@ export default function Index() {
   useEffect(() => {
     return () => subscription.current?.remove();
   }, []);
+
+  useEffect(() => {
+    const animation = Animated.loop(
+      Animated.sequence([
+        Animated.timing(avatarMotion, { toValue: 1, duration: 260, useNativeDriver: true }),
+        Animated.timing(avatarMotion, { toValue: 0, duration: 260, useNativeDriver: true }),
+      ]),
+    );
+
+    animation.start();
+    return () => animation.stop();
+  }, [avatarMotion]);
 
   async function startTracking() {
     setIsLoading(true);
@@ -178,6 +210,10 @@ export default function Index() {
     nextThreshold === currentThreshold ? 0 : (totalMiles - currentThreshold) / (nextThreshold - currentThreshold);
   const progressPercent = Math.min(Math.max(Math.round(levelProgress * 100), 0), 100);
   const progressWidth = `${progressPercent}%` as `${number}%`;
+  const villainProgressPercent = Math.max(progressPercent - 18, 0);
+  const villainProgressWidth = `${villainProgressPercent}%` as `${number}%`;
+  const selectedVillainConfig = villains[selectedVillain];
+  const villainUrl = `https://api.dicebear.com/9.x/adventurer/png?size=96&seed=${selectedVillainConfig.seed}&backgroundColor=${selectedVillainConfig.background}&hairColor=${selectedVillainConfig.color}`;
   const currentMileageLabel = `${totalMiles.toFixed(1)} mi`;
   const currentLevelLabel = `${currentThreshold.toFixed(1)} mi`;
   const nextLevelLabel = `${nextThreshold.toFixed(1)} mi`;
@@ -227,10 +263,75 @@ export default function Index() {
               <Text style={styles.levelProgressSubLabel}>{nextLevelLabel}</Text>
             </View>
           </View>
-          <View style={styles.progressTrack}>
-            <View style={[styles.progressFill, { width: progressWidth }]} />
+          <View style={styles.progressTrackWrap}>
+            <View style={[styles.chaserMarker, { left: villainProgressWidth }]}>
+              <Image
+                accessibilityLabel={`${selectedVillainConfig.label} chasing your avatar`}
+                cachePolicy="disk"
+                contentFit="cover"
+                source={villainUrl}
+                style={styles.markerImage}
+                transition={250}
+              />
+            </View>
+            <Animated.View
+              style={[
+                styles.avatarMarker,
+                { left: progressWidth },
+                {
+                  transform: [
+                    { translateY: avatarMotion.interpolate({ inputRange: [0, 1], outputRange: [0, -4] }) },
+                    { rotate: avatarMotion.interpolate({ inputRange: [0, 1], outputRange: ["-5deg", "5deg"] }) },
+                  ],
+                },
+              ]}
+            >
+              <Image
+                accessibilityLabel="Your customized running QuesttFit avatar"
+                cachePolicy="disk"
+                contentFit="cover"
+                source={avatarUrl}
+                style={styles.markerImage}
+                transition={250}
+              />
+            </Animated.View>
+            <View style={styles.progressTrack}>
+              <View style={[styles.progressFill, { width: progressWidth }]} />
+            </View>
           </View>
           <Text style={styles.levelProgressReadout}>{currentMileageLabel} / {nextLevelLabel}</Text>
+        </View>
+
+        <View style={styles.villainTile}>
+          <View style={styles.villainTileHeader}>
+            <View>
+              <Text style={styles.villainTileLabel}>CHOOSE YOUR CHASER</Text>
+              <Text style={styles.villainTileTitle}>{selectedVillainConfig.label} IS CLOSING IN</Text>
+            </View>
+            <Text style={styles.villainTileDistance}>{villainProgressPercent}%</Text>
+          </View>
+          <View style={styles.villainChoices}>
+            {(Object.keys(villains) as VillainKey[]).map((villainKey) => {
+              const villain = villains[villainKey];
+              const isSelected = villainKey === selectedVillain;
+              const choiceUrl = `https://api.dicebear.com/9.x/adventurer/png?size=72&seed=${villain.seed}&backgroundColor=${villain.background}&hairColor=${villain.color}`;
+
+              return (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: isSelected }}
+                  key={villainKey}
+                  onPress={() => setSelectedVillain(villainKey)}
+                  style={[styles.villainChoice, isSelected && styles.villainChoiceSelected]}
+                >
+                  <Image source={choiceUrl} style={styles.villainChoiceImage} contentFit="cover" />
+                  <Text style={[styles.villainChoiceLabel, isSelected && styles.villainChoiceLabelSelected]}>
+                    {villain.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
         </View>
 
         <View style={styles.statsRow}>
@@ -399,6 +500,46 @@ const styles = StyleSheet.create({
     height: 12,
     overflow: "hidden",
   },
+  progressTrackWrap: {
+    justifyContent: "center",
+    minHeight: 28,
+    position: "relative",
+  },
+  avatarMarker: {
+    backgroundColor: "#ffffff",
+    borderColor: "#de5c38",
+    borderRadius: 23,
+    borderWidth: 3,
+    height: 46,
+    justifyContent: "center",
+    marginLeft: -23,
+    overflow: "hidden",
+    position: "absolute",
+    width: 46,
+    zIndex: 2,
+  },
+  chaserMarker: {
+    backgroundColor: "#ffffff",
+    borderColor: "#10211d",
+    borderRadius: 18,
+    borderWidth: 2,
+    height: 36,
+    justifyContent: "center",
+    marginLeft: -18,
+    opacity: 0.9,
+    overflow: "hidden",
+    position: "absolute",
+    width: 36,
+    zIndex: 1,
+  },
+  avatarImage: {
+    height: "100%",
+    width: "100%",
+  },
+  markerImage: {
+    height: "100%",
+    width: "100%",
+  },
   progressFill: {
     backgroundColor: "#de5c38",
     borderRadius: 999,
@@ -410,6 +551,67 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     marginTop: 10,
     textAlign: "center",
+  },
+  villainTile: {
+    backgroundColor: "#10211d",
+    borderRadius: 14,
+    marginTop: 12,
+    padding: 16,
+  },
+  villainTileHeader: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+  },
+  villainTileLabel: {
+    color: "#7bd6a7",
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 1.2,
+  },
+  villainTileTitle: {
+    color: "#f3f0e8",
+    fontSize: 14,
+    fontWeight: "800",
+    marginTop: 5,
+  },
+  villainTileDistance: {
+    color: "#f6c453",
+    fontSize: 20,
+    fontWeight: "800",
+  },
+  villainChoices: {
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 14,
+  },
+  villainChoice: {
+    alignItems: "center",
+    backgroundColor: "#1c302b",
+    borderColor: "#345048",
+    borderRadius: 10,
+    borderWidth: 1,
+    flex: 1,
+    paddingBottom: 8,
+    paddingTop: 5,
+  },
+  villainChoiceSelected: {
+    backgroundColor: "#de5c38",
+    borderColor: "#f6c453",
+  },
+  villainChoiceImage: {
+    height: 52,
+    width: 52,
+  },
+  villainChoiceLabel: {
+    color: "#c9d1cb",
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 0.6,
+    marginTop: 2,
+  },
+  villainChoiceLabelSelected: {
+    color: "#10211d",
   },
   statsRow: {
     flexDirection: "row",
