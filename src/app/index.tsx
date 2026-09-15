@@ -1440,14 +1440,9 @@ const styles = StyleSheet.create({
   },
   weeklyChaseMarker: {
     alignItems: "center",
-    backgroundColor: "rgba(8, 18, 15, 0.82)",
-    borderColor: "#f08a72",
-    borderRadius: 4,
-    borderWidth: 2,
     height: 34,
     justifyContent: "center",
     marginLeft: -17,
-    overflow: "hidden",
     position: "absolute",
     top: 4,
     width: 34,
@@ -1464,8 +1459,8 @@ const styles = StyleSheet.create({
     zIndex: 3,
   },
   weeklyChaseMarkerImage: {
-    height: "100%",
-    width: "100%",
+    height: 34,
+    width: 34,
   },
   runnerRaceGlyph: {
     fontSize: 24,
