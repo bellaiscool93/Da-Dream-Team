@@ -1,10 +1,10 @@
 import { Stack, useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import {
+    Alert,
     ImageBackground,
     Modal,
     Pressable,
-    Alert,
     SafeAreaView,
     ScrollView,
     StyleSheet,

@@ -3,5 +3,6 @@
     "source.fixAll": "explicit",
     "source.organizeImports": "explicit",
     "source.sortMembers": "explicit"
-  }
+  },
+  "cmake.sourceDirectory": "C:/Users/gcamh/QuestFit/Da-Dream-Team/node_modules/expo-modules-core/android"
 }

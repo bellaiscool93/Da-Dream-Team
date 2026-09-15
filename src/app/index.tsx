@@ -941,11 +941,11 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   backgroundImageStyle: {
-    opacity: 0.55,
+    opacity: 0.85,
   },
   backgroundOverlay: {
     flex: 1,
-    backgroundColor: "rgba(5, 15, 12, 0.68)",
+    backgroundColor: "rgba(5, 15, 12, 0.40)",
   },
   container: {
     flexGrow: 1,
