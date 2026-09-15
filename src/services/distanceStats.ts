@@ -165,7 +165,7 @@ export function recordWeeklyChaseResult(villainKey: string, result: "win" | "los
     const resultKey = `${getWeekKey(new Date())}:${villainKey}`;
     const current = results[resultKey] ?? { wins: 0, losses: 0 };
 
-    if (result === "win" && current.wins > 0 || result === "loss" && current.losses > 0) {
+    if (current.wins > 0 || current.losses > 0) {
       return;
     }
 

@@ -7,6 +7,7 @@ import {
   ActivityIndicator,
   Animated,
   ImageBackground,
+  Platform,
   Pressable,
   SafeAreaView,
   ScrollView,
@@ -138,6 +139,7 @@ export default function Index() {
   const [isTracking, setIsTracking] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [currentTime, setCurrentTime] = useState(() => new Date());
   const [distance, setDistance] = useState(0);
   const [workoutWeekMeters, setWorkoutWeekMeters] = useState(0);
   const [distanceSummary, setDistanceSummary] = useState<DistanceSummary>({ todayMeters: 0, weekMeters: 0, lifetimeMeters: 0 });
@@ -152,6 +154,7 @@ export default function Index() {
   const [weeklyChaseResults, setWeeklyChaseResults] = useState({ wins: 0, losses: 0 });
   const [runnerCustomization, setRunnerCustomization] = useState(defaultRunnerCustomization);
   const runnerMotion = useRef(new Animated.Value(0)).current;
+  const chaserMotion = useRef(new Animated.Value(0)).current;
   const [challenge, setChallenge] = useState<Challenge | null>(null);
   const [challengeSeconds, setChallengeSeconds] = useState(0);
   const [eventStartDistance, setEventStartDistance] = useState(0);
@@ -185,6 +188,11 @@ export default function Index() {
 
   useEffect(() => {
     getChallengeStreak().then((streak) => setChallengeStreak(streak));
+  }, []);
+
+  useEffect(() => {
+    const clock = setInterval(() => setCurrentTime(new Date()), 60000);
+    return () => clearInterval(clock);
   }, []);
 
   useEffect(() => {
@@ -518,25 +526,29 @@ export default function Index() {
     : 0;
   const workoutWeeklyMiles = workoutWeekMeters / metersPerMile;
   const weeklyTargetPercent = Math.min((workoutWeeklyMiles / selectedVillainConfig.weeklyTargetMiles) * 100, 100);
-  const weekProgressPercent = Math.min(((new Date().getDay() + new Date().getHours() / 24) / 7) * 100, 100);
-  const chaseDay = Math.min(new Date().getDay(), 5);
-  const weeklyChaserPercent = chaseDay * 20;
-  const monsterWeeklyMiles = selectedVillainConfig.weeklyTargetMiles * (weeklyChaserPercent / 100);
-  const userIsWinning = workoutWeeklyMiles >= monsterWeeklyMiles;
-  const weeklyOutcome = workoutWeeklyMiles >= selectedVillainConfig.weeklyTargetMiles
+  const weekProgressPercent = Math.min(((currentTime.getDay() + currentTime.getHours() / 24) / 7) * 100, 100);
+  const monsterWeeklyMiles = selectedVillainConfig.weeklyTargetMiles * (weekProgressPercent / 100);
+  const weeklyRunnerPercent = weeklyTargetPercent / 2;
+  const weeklyUserPositionPercent = 50 + weeklyRunnerPercent;
+  const weeklyChaseGap = Math.max(weeklyUserPositionPercent - weekProgressPercent, 0);
+  const weeklyChaseIntensity = Math.min(Math.max((40 - weeklyChaseGap) / 40, 0), 1);
+  const recordedWeeklyOutcome = weeklyChaseResults.wins > 0
     ? "win"
-    : weekProgressPercent >= 100 && workoutWeeklyMiles < selectedVillainConfig.weeklyTargetMiles
+    : weeklyChaseResults.losses > 0
       ? "loss"
       : null;
-  const weeklyRunnerPercent = weeklyTargetPercent / 2;
-  const weeklyUserWidth = `${50 + weeklyRunnerPercent}%` as `${number}%`;
-  const weeklyFillWidth = `${weeklyRunnerPercent}%` as `${number}%`;
-  const weeklyMonsterWidth = `${weeklyChaserPercent}%` as `${number}%`;
+  const weeklyOutcome = recordedWeeklyOutcome ?? (weeklyTargetPercent >= 100
+    ? "win"
+    : weekProgressPercent >= weeklyUserPositionPercent
+      ? "loss"
+      : null);
+  const weeklyUserWidth = `${weeklyUserPositionPercent}%` as `${number}%`;
+  const weeklyRunnerFillWidth = `${weeklyRunnerPercent}%` as `${number}%`;
+  const weeklyMonsterWidth = `${weekProgressPercent}%` as `${number}%`;
   const eventPlayerWidth = `${eventPlayerPercent}%` as `${number}%`;
   const eventMonsterWidth = `${eventMonsterPercent}%` as `${number}%`;
   const villainUrl = selectedVillainConfig.image;
-  const chaserImageOffsetY = -20;
-  const currentMileageLabel = `${totalMiles.toFixed(1)} mi`;
+  const currentMileageLabel = `${totalMiles.toFixed(1)}/${nextThreshold.toFixed(1)} mi`;
   const currentLevelLabel = `${currentThreshold.toFixed(1)} mi`;
   const nextLevelLabel = `${nextThreshold.toFixed(1)} mi`;
   const formattedTime = `${String(Math.floor(elapsedSeconds / 60)).padStart(2, "0")}:${String(
@@ -556,6 +568,24 @@ export default function Index() {
     ? `${String(Math.floor(challengeSeconds / 60)).padStart(2, "0")}:${String(challengeSeconds % 60).padStart(2, "0")}`
     : "00:00";
   const displayedChallenge = challenge ?? { ...getDailyChallenge(), status: "offered" as const };
+
+  useEffect(() => {
+    if (weeklyOutcome) {
+      chaserMotion.stopAnimation(() => chaserMotion.setValue(0));
+      return;
+    }
+
+    const duration = Math.round(600 - weeklyChaseIntensity * 360);
+    const animation = Animated.loop(
+      Animated.sequence([
+        Animated.timing(chaserMotion, { toValue: 1, duration, useNativeDriver: true }),
+        Animated.timing(chaserMotion, { toValue: 0, duration, useNativeDriver: true }),
+      ]),
+    );
+
+    animation.start();
+    return () => animation.stop();
+  }, [chaserMotion, weeklyChaseIntensity, weeklyOutcome]);
 
   useEffect(() => {
     if (!weeklyOutcome) {
@@ -607,16 +637,21 @@ export default function Index() {
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="Choose your chaser"
-                onPress={() => setShowChaserPicker(true)}
-                style={styles.chaserHeroCard}
-              >
+              onPress={() => setShowChaserPicker(true)}
+              style={styles.chaserHeroCard}
+            >
+              <Image source={villainUrl} style={styles.chaserHeroImage} contentFit="cover" contentPosition="center" />
+              <View pointerEvents="none" style={[styles.chaserHeroScrim, selectedVillain === "werewolf" && styles.chaserHeroScrimWerewolf]} />
+              <View style={styles.chaserHeroContent}>
                 <Text style={styles.cardEyebrow}>YOUR CHASER</Text>
-                <Image source={villainUrl} style={styles.chaserHeroImage} contentFit="cover" contentPosition={{ top: -30 }} />
-                <Text style={styles.chaserHeroName}>{selectedVillainConfig.label}</Text>
-                <Text style={styles.chaserHeroLabel}>{selectedVillainConfig.difficulty} CHASER</Text>
-                <Text style={styles.chaserHeroDistance}>{selectedVillainConfig.sprintSpeedMph} mph sprint</Text>
-                <Text style={styles.chaserHeroWeekly}>{selectedVillainConfig.weeklyTargetMiles} mi weekly target</Text>
+                <View>
+                  <Text style={styles.chaserHeroName}>{selectedVillainConfig.label}</Text>
+                  <Text style={styles.chaserHeroLabel}>{selectedVillainConfig.difficulty} CHASER</Text>
+                  <Text style={styles.chaserHeroDistance}>{selectedVillainConfig.sprintSpeedMph} mph sprint</Text>
+                  <Text style={styles.chaserHeroWeekly}>{selectedVillainConfig.weeklyTargetMiles} mi weekly target</Text>
+                </View>
                 <Text style={styles.chaserTapHint}>TAP TO CHOOSE</Text>
+              </View>
               </Pressable>
             </View>
 
@@ -686,30 +721,48 @@ export default function Index() {
             <Text style={styles.weeklyChaseReset}>BEAT {weeklyChaseResults.wins} · LOST {weeklyChaseResults.losses}</Text>
           </View>
           <View style={styles.weeklyChaseLabels}>
-            <Text style={styles.levelProgressLabel}>0 mi</Text>
+            <Text style={styles.levelProgressLabel}>{selectedVillainConfig.label} 0 mi</Text>
+            <Text style={styles.levelProgressLabel}>YOU 0 mi</Text>
             <Text style={styles.levelProgressLabel}>{selectedVillainConfig.weeklyTargetMiles} mi</Text>
           </View>
           <View style={styles.weeklyChaseTrackWrap}>
-            <View style={styles.weeklyRunnerLane}>
-              <View style={styles.progressTrack}>
-              <View style={[styles.weeklyChaseFill, userIsWinning ? styles.weeklyChaseFillWinning : styles.weeklyChaseFillLosing, { width: weeklyFillWidth }]} />
-              </View>
+            <View style={[styles.progressTrack, styles.weeklyChaseTrack]}>
+              <View style={[styles.weeklyChaseMonsterFill, { width: weeklyMonsterWidth }]} />
+              <View style={[styles.weeklyChaseRunnerFill, { width: weeklyRunnerFillWidth }]} />
             </View>
             <View style={[styles.weeklyUserMarker, { left: weeklyUserWidth }]}>
               <Text style={styles.runnerRaceGlyph}>{runnerCustomization.runner}</Text>
             </View>
-            <View style={[styles.weeklyChaseMarker, { left: weeklyMonsterWidth }]}>
+            <Animated.View
+              style={[
+                styles.weeklyChaseMarker,
+                { left: weeklyMonsterWidth },
+                {
+                  transform: [
+                    { translateX: chaserMotion.interpolate({ inputRange: [0, 1], outputRange: [0, 2 + weeklyChaseIntensity * 6] }) },
+                    { translateY: chaserMotion.interpolate({ inputRange: [0, 1], outputRange: [0, -(1 + weeklyChaseIntensity * 5)] }) },
+                    { rotate: chaserMotion.interpolate({ inputRange: [0, 1], outputRange: ["0deg", `${2 + weeklyChaseIntensity * 8}deg`] }) },
+                    { scale: chaserMotion.interpolate({ inputRange: [0, 1], outputRange: [1, 1 + weeklyChaseIntensity * 0.1] }) },
+                  ],
+                },
+              ]}
+            >
               <Image
                 source={villainUrl}
-                style={[styles.weeklyChaseMarkerImage, { transform: [{ translateY: chaserImageOffsetY }] }]}
-                contentFit="cover"
+                style={styles.weeklyChaseMarkerImage}
+                contentFit="contain"
               />
-            </View>
+            </Animated.View>
           </View>
           <View style={styles.weeklyChaseReadoutRow}>
-            <Text style={styles.weeklyChaseReadout}>YOU {workoutWeeklyMiles.toFixed(2)} mi</Text>
             <Text style={styles.weeklyChaseReadout}>{selectedVillainConfig.label} {monsterWeeklyMiles.toFixed(2)} mi</Text>
+            <Text style={styles.weeklyChaseReadout}>YOU {workoutWeeklyMiles.toFixed(2)} mi</Text>
           </View>
+          {weeklyOutcome && (
+            <Text style={[styles.weeklyChaseOutcome, weeklyOutcome === "win" ? styles.weeklyChaseOutcomeWin : styles.weeklyChaseOutcomeLoss]}>
+              {weeklyOutcome === "win" ? "YOU WON!" : "YOU LOST!"}
+            </Text>
+          )}
         </View>
 
         <View style={styles.workoutCard}>
@@ -826,95 +879,95 @@ export default function Index() {
 
         {errorMessage && <Text style={styles.error}>{errorMessage}</Text>}
 
-        {challenge && (
-          <View style={styles.challengeOverlay}>
-            <View style={styles.challengeCard}>
-              <Image source={villainUrl} style={styles.challengeVillainImage} contentFit="cover" />
-              <Text style={styles.challengeEyebrow}>
-                {challenge.status === "active" ? "CHASE IN PROGRESS" : villainChallengeMessages[selectedVillain].cue}
-              </Text>
-              <Text style={styles.challengeTitle}>{challenge.title}</Text>
-              <Text style={styles.challengeDetail}>{challenge.detail}</Text>
-
-              {challenge.status === "active" && (
-                <View style={styles.eventRaceSection}>
-                  <View style={styles.eventRaceLabels}>
-                    <Text style={styles.eventRaceLabel}>YOU</Text>
-                    <Text style={styles.eventRaceLabel}>FINISH</Text>
-                    <Text style={styles.eventRaceLabel}>{selectedVillainConfig.label}</Text>
-                  </View>
-                  <View style={styles.eventRaceTrackWrap}>
-                    <View style={styles.eventRaceTrack}>
-                      <View style={[styles.eventRacePlayerFill, { width: eventPlayerWidth }]} />
-                    </View>
-                    <View style={[styles.eventRacePlayerMarker, { left: eventPlayerWidth }]}>
-                      <Text style={styles.runnerRaceGlyph}>{runnerCustomization.runner}</Text>
-                    </View>
-                    <View style={[styles.eventRaceMonsterMarker, { left: eventMonsterWidth }]}>
-                      <Image source={villainUrl} style={styles.eventRaceMarkerImage} contentFit="cover" />
-                    </View>
-                  </View>
-                  <Text style={styles.eventRaceReadout}>{Math.round(eventPlayerPercent)}% of the finish distance</Text>
-                </View>
-              )}
-
-              {challenge.status === "active" && (
-                <View style={styles.challengeTimerWrap}>
-                  <Text style={styles.challengeTimerLabel}>RUN TIMER</Text>
-                  <Text style={styles.challengeTimerValue}>{challengeCountdownLabel}</Text>
-                </View>
-              )}
-
-              <View style={styles.challengeActions}>
-                {challenge.status === "offered" ? (
-                  <>
-                    <Pressable accessibilityRole="button" onPress={acceptChallenge} style={({ pressed }) => [styles.challengeActionPrimary, pressed && styles.buttonPressed]}>
-                      <Text style={styles.challengeActionPrimaryText}>RUN NOW</Text>
-                    </Pressable>
-                    <Pressable accessibilityRole="button" onPress={skipChallenge} style={({ pressed }) => [styles.challengeActionSecondary, pressed && styles.buttonPressed]}>
-                      <Text style={styles.challengeActionSecondaryText}>IGNORE</Text>
-                    </Pressable>
-                  </>
-                ) : (
-                  <Pressable accessibilityRole="button" onPress={skipChallenge} style={({ pressed }) => [styles.challengeActionSecondary, pressed && styles.buttonPressed]}>
-                    <Text style={styles.challengeActionSecondaryText}>FINISH CHASE</Text>
-                  </Pressable>
-                )}
-              </View>
-            </View>
-          </View>
-        )}
-
-        {showRunnerPicker && (
-          <View style={styles.chaserPickerOverlay}>
-            <View style={styles.chaserPickerCard}>
-              <Text style={styles.cardEyebrow}>CUSTOMIZE YOUR RUNNERS</Text>
-              <Text style={styles.cardTitle}>CHOOSE A RUNNER</Text>
-              <View style={styles.runnerPickerChoices}>
-                {runnerOptions.map((option, index) => {
-                  const isSelected = option === runnerCustomization;
-                  return (
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityState={{ selected: isSelected }}
-                      key={`${option.label}-${index}`}
-                      onPress={() => { setRunnerCustomization(option); setShowRunnerPicker(false); }}
-                      style={[styles.runnerPickerChoice, isSelected && styles.runnerPickerChoiceSelected]}
-                    >
-                      <Text style={styles.runnerPickerGlyph}>{option.runner}</Text>
-                      <Text style={[styles.runnerPickerLabel, isSelected && styles.runnerPickerLabelSelected]}>{option.label}</Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
-              <Pressable onPress={() => setShowRunnerPicker(false)} style={styles.pickerCloseButton}>
-                <Text style={styles.pickerCloseText}>CLOSE</Text>
-              </Pressable>
-            </View>
-          </View>
-        )}
-
           </ScrollView>
+
+          {challenge && (
+            <View style={styles.challengeOverlay}>
+              <View style={styles.challengeCard}>
+                <Image source={villainUrl} style={styles.challengeVillainImage} contentFit="cover" />
+                <Text style={styles.challengeEyebrow}>
+                  {challenge.status === "active" ? "CHASE IN PROGRESS" : villainChallengeMessages[selectedVillain].cue}
+                </Text>
+                <Text style={styles.challengeTitle}>{challenge.title}</Text>
+                <Text style={styles.challengeDetail}>{challenge.detail}</Text>
+
+                {challenge.status === "active" && (
+                  <View style={styles.eventRaceSection}>
+                    <View style={styles.eventRaceLabels}>
+                      <Text style={styles.eventRaceLabel}>YOU</Text>
+                      <Text style={styles.eventRaceLabel}>FINISH</Text>
+                      <Text style={styles.eventRaceLabel}>{selectedVillainConfig.label}</Text>
+                    </View>
+                    <View style={styles.eventRaceTrackWrap}>
+                      <View style={styles.eventRaceTrack}>
+                        <View style={[styles.eventRacePlayerFill, { width: eventPlayerWidth }]} />
+                      </View>
+                      <View style={[styles.eventRacePlayerMarker, { left: eventPlayerWidth }]}>
+                        <Text style={styles.runnerRaceGlyph}>{runnerCustomization.runner}</Text>
+                      </View>
+                      <View style={[styles.eventRaceMonsterMarker, { left: eventMonsterWidth }]}>
+                        <Image source={villainUrl} style={styles.eventRaceMarkerImage} contentFit="cover" />
+                      </View>
+                    </View>
+                    <Text style={styles.eventRaceReadout}>{Math.round(eventPlayerPercent)}% of the finish distance</Text>
+                  </View>
+                )}
+
+                {challenge.status === "active" && (
+                  <View style={styles.challengeTimerWrap}>
+                    <Text style={styles.challengeTimerLabel}>RUN TIMER</Text>
+                    <Text style={styles.challengeTimerValue}>{challengeCountdownLabel}</Text>
+                  </View>
+                )}
+
+                <View style={styles.challengeActions}>
+                  {challenge.status === "offered" ? (
+                    <>
+                      <Pressable accessibilityRole="button" onPress={acceptChallenge} style={({ pressed }) => [styles.challengeActionPrimary, pressed && styles.buttonPressed]}>
+                        <Text style={styles.challengeActionPrimaryText}>RUN NOW</Text>
+                      </Pressable>
+                      <Pressable accessibilityRole="button" onPress={skipChallenge} style={({ pressed }) => [styles.challengeActionSecondary, pressed && styles.buttonPressed]}>
+                        <Text style={styles.challengeActionSecondaryText}>IGNORE</Text>
+                      </Pressable>
+                    </>
+                  ) : (
+                    <Pressable accessibilityRole="button" onPress={skipChallenge} style={({ pressed }) => [styles.challengeActionSecondary, pressed && styles.buttonPressed]}>
+                      <Text style={styles.challengeActionSecondaryText}>FINISH CHASE</Text>
+                    </Pressable>
+                  )}
+                </View>
+              </View>
+            </View>
+          )}
+
+          {showRunnerPicker && (
+            <View style={styles.chaserPickerOverlay}>
+              <View style={styles.chaserPickerCard}>
+                <Text style={styles.cardEyebrow}>CUSTOMIZE YOUR RUNNERS</Text>
+                <Text style={styles.cardTitle}>CHOOSE A RUNNER</Text>
+                <View style={styles.runnerPickerChoices}>
+                  {runnerOptions.map((option, index) => {
+                    const isSelected = option === runnerCustomization;
+                    return (
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityState={{ selected: isSelected }}
+                        key={`${option.label}-${index}`}
+                        onPress={() => { setRunnerCustomization(option); setShowRunnerPicker(false); }}
+                        style={[styles.runnerPickerChoice, isSelected && styles.runnerPickerChoiceSelected]}
+                      >
+                        <Text style={styles.runnerPickerGlyph}>{option.runner}</Text>
+                        <Text numberOfLines={1} style={[styles.runnerPickerLabel, isSelected && styles.runnerPickerLabelSelected]}>{option.label}</Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+                <Pressable onPress={() => setShowRunnerPicker(false)} style={styles.pickerCloseButton}>
+                  <Text style={styles.pickerCloseText}>CLOSE</Text>
+                </Pressable>
+              </View>
+            </View>
+          )}
 
           {showChaserPicker && (
             <View style={styles.chaserPickerOverlay}>
@@ -990,8 +1043,10 @@ const styles = StyleSheet.create({
   },
   brandName: {
     color: "#f5f7f3",
-    fontFamily: "serif",
+    fontFamily: Platform.select({ ios: "Palatino", default: "serif" }),
     fontSize: 30,
+    fontWeight: "700",
+    letterSpacing: 0.5,
   },
   brandTagline: {
     color: "rgba(235, 245, 239, 0.62)",
@@ -1101,13 +1156,21 @@ const styles = StyleSheet.create({
     flex: 1,
     minHeight: 218,
     overflow: "hidden",
-    padding: 12,
   },
   chaserHeroImage: {
-    alignSelf: "center",
-    height: 88,
-    marginTop: 4,
-    width: "100%",
+    ...StyleSheet.absoluteFill,
+  },
+  chaserHeroScrim: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: "rgba(5, 15, 12, 0.38)",
+  },
+  chaserHeroScrimWerewolf: {
+    backgroundColor: "rgba(5, 15, 12, 0.26)",
+  },
+  chaserHeroContent: {
+    flex: 1,
+    justifyContent: "space-between",
+    padding: 12,
   },
   chaserHeroName: {
     color: "#ffffff",
@@ -1169,6 +1232,7 @@ const styles = StyleSheet.create({
   sessionStatus: {
     alignItems: "center",
     flexDirection: "row",
+    gap: 4,
     marginTop: 10,
     paddingHorizontal: 4,
   },
@@ -1416,41 +1480,38 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     marginBottom: 6,
-    paddingLeft: "50%",
   },
   weeklyChaseTrackWrap: {
     justifyContent: "center",
     minHeight: 42,
     position: "relative",
   },
-  weeklyRunnerLane: {
-    left: "50%",
-    position: "absolute",
-    right: 0,
+  weeklyChaseTrack: {
+    width: "100%",
   },
-  weeklyChaseFill: {
+  weeklyChaseMonsterFill: {
+    backgroundColor: "#d75b52",
     borderRadius: 999,
     height: "100%",
+    left: 0,
+    position: "absolute",
   },
-  weeklyChaseFillWinning: {
+  weeklyChaseRunnerFill: {
     backgroundColor: "#c8e8a1",
-  },
-  weeklyChaseFillLosing: {
-    backgroundColor: "#f08a72",
+    borderRadius: 999,
+    height: "100%",
+    left: "50%",
+    position: "absolute",
+    zIndex: 1,
   },
   weeklyChaseMarker: {
     alignItems: "center",
-    backgroundColor: "rgba(8, 18, 15, 0.82)",
-    borderColor: "#f08a72",
-    borderRadius: 4,
-    borderWidth: 2,
-    height: 34,
+    height: 40,
     justifyContent: "center",
-    marginLeft: -17,
-    overflow: "hidden",
+    marginLeft: -20,
     position: "absolute",
-    top: 4,
-    width: 34,
+    top: 0,
+    width: 40,
     zIndex: 2,
   },
   weeklyUserMarker: {
@@ -1482,6 +1543,19 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     marginTop: 5,
+  },
+  weeklyChaseOutcome: {
+    fontSize: 12,
+    fontWeight: "900",
+    letterSpacing: 1.2,
+    marginTop: 8,
+    textAlign: "center",
+  },
+  weeklyChaseOutcomeWin: {
+    color: "#c8e8a1",
+  },
+  weeklyChaseOutcomeLoss: {
+    color: "#f08a72",
   },
   workoutCard: {
     backgroundColor: "rgba(235, 245, 239, 0.10)",
@@ -1782,7 +1856,7 @@ const styles = StyleSheet.create({
     marginTop: 18,
   },
   challengeCard: {
-    backgroundColor: "rgba(55, 25, 22, 0.62)",
+    backgroundColor: "#371916",
     borderColor: "rgba(240, 138, 114, 0.52)",
     borderRadius: 22,
     borderWidth: 1,
@@ -1962,9 +2036,9 @@ const styles = StyleSheet.create({
   },
   runnerPickerLabel: {
     color: "#c0ccc6",
-    fontSize: 9,
+    fontSize: 8,
     fontWeight: "800",
-    letterSpacing: 0.5,
+    letterSpacing: 0.3,
     marginTop: 2,
   },
   runnerPickerLabelSelected: {
