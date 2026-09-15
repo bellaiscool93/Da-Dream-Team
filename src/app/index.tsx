@@ -1,9 +1,13 @@
+import { setAudioModeAsync, useAudioPlayer } from "expo-audio";
 import { Image } from "expo-image";
 import * as Location from "expo-location";
+import { useRouter } from "expo-router";
 import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Animated,
+  ImageBackground,
+  Platform,
   Pressable,
   SafeAreaView,
   ScrollView,
@@ -11,76 +15,86 @@ import {
   Text,
   View,
 } from "react-native";
+import { chaserSounds } from "../../assets/sounds";
+import {
+  buildRandomChaseChallenge,
+  Challenge,
+  challengePool,
+  defaultRunnerCustomization,
+  distanceBetweenPoints,
+  getDailyChallenge,
+  LocationLike,
+  maximumAcceptedAccuracy,
+  maximumAcceptedSegment,
+  metersPerMile,
+  runnerOptions,
+  villainChallengeMessages,
+  VillainKey,
+  villains
+} from "../features/home/homeModel";
+import { getChallengeStreak, getCurrentWeekWorkoutMeters, getDistanceSummary, getWeeklyChaseResults, recordChallengeCompletion, recordDistance, recordWeeklyChaseResult, recordWorkout } from "../services/distanceStats";
 import { requestHealthPermissions, saveWorkoutToHealth } from "../services/healthkit";
 
-const metersPerMile = 1609.344;
-const feetPerMeter = 3.28084;
-const maximumAcceptedAccuracy = 100;
-const maximumAcceptedSegment = 50;
-const avatarCustomization = {
-  seed: "questtfit-runner",
-  skinColor: "edb98a",
-  hairColor: "2c1b18",
-  clothingColor: "de5c38",
-  backgroundColor: "f6c453",
-};
-
-const avatarUrl = `https://api.dicebear.com/9.x/avataaars/png?size=96&seed=${avatarCustomization.seed}&skinColor=${avatarCustomization.skinColor}&hairColor=${avatarCustomization.hairColor}&clothingColor=${avatarCustomization.clothingColor}&backgroundColor=${avatarCustomization.backgroundColor}`;
-const villains = {
-  werewolf: { label: "WEREWOLF", seed: "moon-werewolf", color: "6b7280", background: "d9f0e2" },
-  witch: { label: "WITCH", seed: "night-witch", color: "7c3aed", background: "eadcff" },
-  vampire: { label: "VAMPIRE", seed: "crimson-vampire", color: "991b1b", background: "f9dede" },
-} as const;
-
-type VillainKey = keyof typeof villains;
-
-type Challenge = {
-  title: string;
-  detail: string;
-  durationSeconds: number;
-  status: "offered" | "active";
-};
-
-const challengePool = [
-  { title: "Quick sprint", detail: "Pick up the pace for 30 seconds.", durationSeconds: 30 },
-  { title: "Steady push", detail: "Keep moving continuously for 60 seconds.", durationSeconds: 60 },
-  { title: "Form check", detail: "Relax your shoulders and take 10 controlled steps.", durationSeconds: 30 },
-];
-
-function distanceBetweenPoints(
-  start: Location.LocationObjectCoords,
-  end: Location.LocationObjectCoords,
-) {
-  const earthRadius = 6371000;
-  const latitudeDelta = ((end.latitude - start.latitude) * Math.PI) / 180;
-  const longitudeDelta = ((end.longitude - start.longitude) * Math.PI) / 180;
-  const startLatitude = (start.latitude * Math.PI) / 180;
-  const endLatitude = (end.latitude * Math.PI) / 180;
-
-  const haversine =
-    Math.sin(latitudeDelta / 2) ** 2 +
-    Math.cos(startLatitude) *
-      Math.cos(endLatitude) *
-      Math.sin(longitudeDelta / 2) ** 2;
-
-  return 2 * earthRadius * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine));
-}
-
 export default function Index() {
+  const router = useRouter();
   const [isTracking, setIsTracking] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [currentTime, setCurrentTime] = useState(() => new Date());
   const [distance, setDistance] = useState(0);
+  const [workoutWeekMeters, setWorkoutWeekMeters] = useState(0);
+  const [distanceSummary, setDistanceSummary] = useState<DistanceSummary>({ todayMeters: 0, weekMeters: 0, lifetimeMeters: 0 });
+  const [workoutDistance, setWorkoutDistance] = useState(0);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
-  const [accuracy, setAccuracy] = useState<number | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [healthStatus, setHealthStatus] = useState("not-connected");
   const [selectedVillain, setSelectedVillain] = useState<VillainKey>("werewolf");
-  const avatarMotion = useRef(new Animated.Value(0)).current;
+  const [showChaserPicker, setShowChaserPicker] = useState(false);
+  const [showRunnerPicker, setShowRunnerPicker] = useState(false);
+  const [challengeStreak, setChallengeStreak] = useState({ current: 0, highest: 0 });
+  const [weeklyChaseResults, setWeeklyChaseResults] = useState({ wins: 0, losses: 0 });
+  const [runnerCustomization, setRunnerCustomization] = useState(defaultRunnerCustomization);
+  const runnerMotion = useRef(new Animated.Value(0)).current;
+  const chaserMotion = useRef(new Animated.Value(0)).current;
   const [challenge, setChallenge] = useState<Challenge | null>(null);
   const [challengeSeconds, setChallengeSeconds] = useState(0);
+  const [eventStartDistance, setEventStartDistance] = useState(0);
+  const eventAudioPlayer = useAudioPlayer(null);
   const subscription = useRef<Location.LocationSubscription | null>(null);
-  const previousLocation = useRef<Location.LocationObjectCoords | null>(null);
+  const webLocationWatchId = useRef<number | null>(null);
+  const previousLocation = useRef<LocationLike | null>(null);
+  const liveDistanceRef = useRef(0);
+  const workoutPreviousLocation = useRef<LocationLike | null>(null);
+  const workoutDistanceRef = useRef(0);
+  const completedEventsRef = useRef(0);
+  const isTrackingRef = useRef(false);
   const startedAt = useRef<Date | null>(null);
+  const workoutStartedAt = useRef<Date | null>(null);
+
+  useEffect(() => {
+    getDistanceSummary().then((summary) => {
+      setDistanceSummary(summary);
+      liveDistanceRef.current = summary.todayMeters;
+      setDistance(summary.todayMeters);
+    });
+  }, []);
+
+  useEffect(() => {
+    getCurrentWeekWorkoutMeters().then(setWorkoutWeekMeters);
+  }, []);
+
+  useEffect(() => {
+    getWeeklyChaseResults(selectedVillain).then(setWeeklyChaseResults);
+  }, [selectedVillain]);
+
+  useEffect(() => {
+    getChallengeStreak().then((streak) => setChallengeStreak(streak));
+  }, []);
+
+  useEffect(() => {
+    const clock = setInterval(() => setCurrentTime(new Date()), 60000);
+    return () => clearInterval(clock);
+  }, []);
 
   useEffect(() => {
     if (!isTracking || startedAt.current === null) {
@@ -95,34 +109,150 @@ export default function Index() {
   }, [isTracking]);
 
   useEffect(() => {
-    return () => subscription.current?.remove();
+    let cancelled = false;
+
+    const handleLocationUpdate = (coords: LocationLike) => {
+      const currentAccuracy = coords.accuracy;
+      const usableAccuracy =
+        currentAccuracy === null || currentAccuracy === undefined || currentAccuracy <= maximumAcceptedAccuracy;
+
+      if (!usableAccuracy) {
+        return;
+      }
+
+      if (previousLocation.current) {
+        const segmentDistance = distanceBetweenPoints(previousLocation.current, coords);
+
+        if (segmentDistance >= 1 && segmentDistance <= maximumAcceptedSegment) {
+          liveDistanceRef.current += segmentDistance;
+          setDistance(liveDistanceRef.current);
+          setDistanceSummary((summary) => ({
+            todayMeters: summary.todayMeters + segmentDistance,
+            weekMeters: summary.weekMeters + segmentDistance,
+            lifetimeMeters: summary.lifetimeMeters + segmentDistance,
+          }));
+          void recordDistance(segmentDistance);
+
+          if (isTrackingRef.current && workoutPreviousLocation.current) {
+            const workoutSegment = distanceBetweenPoints(workoutPreviousLocation.current, coords);
+            if (workoutSegment >= 1 && workoutSegment <= maximumAcceptedSegment) {
+              workoutDistanceRef.current += workoutSegment;
+              setWorkoutDistance(workoutDistanceRef.current);
+              setWorkoutWeekMeters((current) => current + workoutSegment);
+            }
+          }
+        }
+      }
+
+      previousLocation.current = coords;
+      workoutPreviousLocation.current = isTrackingRef.current ? coords : null;
+    };
+
+    async function startLiveLocation() {
+      try {
+        const permission = await Location.requestForegroundPermissionsAsync();
+        if (!permission.granted) {
+          setErrorMessage("Location access is needed to show live distance.");
+          return;
+        }
+
+        if (typeof Location.hasServicesEnabledAsync === "function" && !(await Location.hasServicesEnabledAsync())) {
+          setErrorMessage("Turn on Location Services in Settings, then try again.");
+          return;
+        }
+
+        if (cancelled) {
+          return;
+        }
+
+        try {
+          subscription.current = await Location.watchPositionAsync(
+            { accuracy: Location.Accuracy.High, distanceInterval: 1, timeInterval: 1000 },
+            (location) => handleLocationUpdate(location.coords),
+            (reason) => setErrorMessage(reason),
+          );
+        } catch {
+          if (typeof navigator !== "undefined" && "geolocation" in navigator) {
+            webLocationWatchId.current = navigator.geolocation.watchPosition(
+              (position) => handleLocationUpdate(position.coords),
+              () => setErrorMessage("The browser could not access your GPS location."),
+              { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 },
+            );
+          } else {
+            throw new Error("Location tracking is unavailable on this device.");
+          }
+        }
+      } catch {
+        setErrorMessage("We could not start live location. Please try again.");
+      }
+    }
+
+    void startLiveLocation();
+
+    return () => {
+      cancelled = true;
+      subscription.current?.remove();
+      subscription.current = null;
+      if (typeof navigator !== "undefined" && "geolocation" in navigator && webLocationWatchId.current !== null) {
+        navigator.geolocation.clearWatch(webLocationWatchId.current);
+        webLocationWatchId.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      subscription.current?.remove();
+      if (typeof navigator !== "undefined" && "geolocation" in navigator && webLocationWatchId.current !== null) {
+        navigator.geolocation.clearWatch(webLocationWatchId.current);
+      }
+    };
   }, []);
 
   useEffect(() => {
     const animation = Animated.loop(
       Animated.sequence([
-        Animated.timing(avatarMotion, { toValue: 1, duration: 260, useNativeDriver: true }),
-        Animated.timing(avatarMotion, { toValue: 0, duration: 260, useNativeDriver: true }),
+        Animated.timing(runnerMotion, { toValue: 1, duration: 260, useNativeDriver: true }),
+        Animated.timing(runnerMotion, { toValue: 0, duration: 260, useNativeDriver: true }),
       ]),
     );
 
     animation.start();
     return () => animation.stop();
-  }, [avatarMotion]);
+  }, [runnerMotion]);
+
+  useEffect(() => {
+    void setAudioModeAsync({
+      playsInSilentMode: true,
+      interruptionMode: "mixWithOthers",
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!challenge || challenge.status !== "offered") {
+      return;
+    }
+
+    const soundSource = chaserSounds[selectedVillain];
+    if (soundSource !== null) {
+      eventAudioPlayer.replace(soundSource);
+      eventAudioPlayer.play();
+    }
+  }, [challenge, eventAudioPlayer, selectedVillain]);
 
   useEffect(() => {
     if (!isTracking || challenge) {
       return;
     }
 
-    const delay = (Math.floor(Math.random() * 16) + 20) * 1000;
+    const delay = (Math.floor(Math.random() * 16) + 18) * 1000;
     const challengeTimer = setTimeout(() => {
-      const nextChallenge = challengePool[Math.floor(Math.random() * challengePool.length)];
-      setChallenge({ ...nextChallenge, status: "offered" });
+      const nextChase = buildRandomChaseChallenge(selectedVillain);
+      setChallenge(nextChase);
     }, delay);
 
     return () => clearTimeout(challengeTimer);
-  }, [isTracking, challenge]);
+  }, [isTracking, challenge, selectedVillain]);
 
   useEffect(() => {
     if (!challenge || challenge.status !== "active") {
@@ -130,7 +260,11 @@ export default function Index() {
     }
 
     if (challengeSeconds <= 0) {
-      const completionTimer = setTimeout(() => setChallenge(null), 900);
+      const completionTimer = setTimeout(() => {
+        completedEventsRef.current += 1;
+        void recordChallengeCompletion().then(() => getChallengeStreak().then((streak) => setChallengeStreak(streak)));
+        setChallenge(null);
+      }, 900);
       return () => clearTimeout(completionTimer);
     }
 
@@ -148,12 +282,11 @@ export default function Index() {
     try {
       const permission = await Location.requestForegroundPermissionsAsync();
       if (!permission.granted) {
-        setErrorMessage("Location access is needed to measure your workout.");
+        setErrorMessage("Location access is needed to start a workout.");
         return;
       }
 
-      const servicesEnabled = await Location.hasServicesEnabledAsync();
-      if (!servicesEnabled) {
+      if (typeof Location.hasServicesEnabledAsync === "function" && !(await Location.hasServicesEnabledAsync())) {
         setErrorMessage("Turn on Location Services in Settings, then try again.");
         return;
       }
@@ -165,44 +298,23 @@ export default function Index() {
         setHealthStatus("not-supported");
       }
 
-      previousLocation.current = null;
-      startedAt.current = new Date();
-      setDistance(0);
-      setElapsedSeconds(0);
-      setChallenge(null);
-      setChallengeSeconds(0);
+      isTrackingRef.current = true;
+      workoutPreviousLocation.current = previousLocation.current;
 
-      subscription.current = await Location.watchPositionAsync(
-        {
-          accuracy: Location.Accuracy.High,
-          distanceInterval: 1,
-        },
-        (location) => {
-          const { coords } = location;
-          setAccuracy(coords.accuracy);
+      if (!isPaused) {
+        workoutDistanceRef.current = 0;
+        completedEventsRef.current = 0;
+        workoutStartedAt.current = new Date();
+        setWorkoutDistance(0);
+        setElapsedSeconds(0);
+        setChallenge(null);
+        setChallengeSeconds(0);
+      }
 
-          const currentAccuracy = coords.accuracy;
-          const usableAccuracy =
-            currentAccuracy !== null && currentAccuracy <= maximumAcceptedAccuracy;
-
-          if (!usableAccuracy) {
-            return;
-          }
-
-          if (previousLocation.current) {
-            const segmentDistance = distanceBetweenPoints(previousLocation.current, coords);
-
-            if (segmentDistance >= 1 && segmentDistance <= maximumAcceptedSegment) {
-              setDistance((currentDistance) => currentDistance + segmentDistance);
-            }
-          }
-
-          previousLocation.current = coords;
-        },
-        (reason) => setErrorMessage(reason),
-      );
+      startedAt.current = new Date(Date.now() - elapsedSeconds * 1000);
 
       setIsTracking(true);
+      setIsPaused(false);
     } catch {
       setErrorMessage("We could not start location tracking. Please try again.");
     } finally {
@@ -211,44 +323,72 @@ export default function Index() {
   }
 
   async function stopTracking() {
-    const workoutStart = startedAt.current;
-    const workoutDistance = distance;
+    const workoutStart = workoutStartedAt.current;
+    const completedWorkoutDistance = workoutDistanceRef.current;
+    const completedWorkoutSeconds = isTracking && startedAt.current
+      ? Math.max(0, Math.floor((Date.now() - startedAt.current.getTime()) / 1000))
+      : elapsedSeconds;
+    const completedEvents = completedEventsRef.current;
     const workoutEnd = new Date();
 
-    subscription.current?.remove();
-    subscription.current = null;
+    isTrackingRef.current = false;
     startedAt.current = null;
-    previousLocation.current = null;
+    workoutStartedAt.current = null;
+    workoutPreviousLocation.current = null;
     setIsTracking(false);
-    setChallenge(null);
-    setChallengeSeconds(0);
+    setIsPaused(false);
 
-    if (workoutStart && workoutDistance > 0) {
+    if (workoutStart) {
+      await recordWorkout({
+        startedAt: workoutStart.toISOString(),
+        distanceMeters: completedWorkoutDistance,
+        durationSeconds: completedWorkoutSeconds,
+        eventsCompleted: completedEvents,
+      });
+    }
+
+    if (workoutStart && completedWorkoutDistance > 0) {
       try {
-        const saved = await saveWorkoutToHealth(workoutDistance, workoutStart, workoutEnd);
+        const saved = await saveWorkoutToHealth(completedWorkoutDistance, workoutStart, workoutEnd);
         setHealthStatus(saved ? "saved" : "not-supported");
       } catch {
         setHealthStatus("error");
         setErrorMessage("The workout stayed on this device, but Apple Health could not save it.");
       }
     }
+
+    workoutDistanceRef.current = 0;
+    setWorkoutDistance(0);
+    setElapsedSeconds(0);
+  }
+
+  function pauseTracking() {
+    if (!isTracking) {
+      return;
+    }
+
+    if (startedAt.current) {
+      setElapsedSeconds(Math.max(0, Math.floor((Date.now() - startedAt.current.getTime()) / 1000)));
+    }
+    isTrackingRef.current = false;
+    startedAt.current = null;
+    workoutPreviousLocation.current = null;
+    setIsTracking(false);
+    setIsPaused(true);
+    setChallenge(null);
+    setChallengeSeconds(0);
   }
 
   async function resetWorkout() {
     await stopTracking();
-    setDistance(0);
-    setElapsedSeconds(0);
-    setAccuracy(null);
     setErrorMessage(null);
   }
 
   function acceptChallenge() {
-    if (!challenge) {
-      return;
-    }
-
-    setChallengeSeconds(challenge.durationSeconds);
-    setChallenge({ ...challenge, status: "active" });
+    const nextChallenge = challenge ?? { ...challengePool[0], status: "offered" as const };
+    setEventStartDistance(workoutDistanceRef.current);
+    setChallenge({ ...nextChallenge, status: "active" });
+    setChallengeSeconds(nextChallenge.durationSeconds);
   }
 
   function skipChallenge() {
@@ -256,10 +396,12 @@ export default function Index() {
     setChallengeSeconds(0);
   }
 
-  const formattedDistance = (distance / 1000).toFixed(3);
   const totalMiles = distance / metersPerMile;
-  const formattedMiles = totalMiles.toFixed(2);
-  const formattedFeet = Math.round(distance * feetPerMeter);
+  const dailyMiles = distanceSummary.todayMeters / metersPerMile;
+  const weeklyMiles = distanceSummary.weekMeters / metersPerMile;
+  const lifetimeMiles = distanceSummary.lifetimeMeters / metersPerMile;
+  const workoutMiles = workoutDistance / metersPerMile;
+  const formattedWorkoutMiles = workoutMiles.toFixed(2);
   const getLevelThreshold = (level: number) => (level * (level + 1)) / 2;
 
   let currentLevel = 0;
@@ -277,8 +419,37 @@ export default function Index() {
   const villainProgressPercent = Math.max(progressPercent - 18, 0);
   const villainProgressWidth = `${villainProgressPercent}%` as `${number}%`;
   const selectedVillainConfig = villains[selectedVillain];
-  const villainUrl = `https://api.dicebear.com/9.x/adventurer/png?size=96&seed=${selectedVillainConfig.seed}&backgroundColor=${selectedVillainConfig.background}&hairColor=${selectedVillainConfig.color}`;
-  const currentMileageLabel = `${totalMiles.toFixed(1)} mi`;
+  const eventFinishMeters = selectedVillainConfig.sprintSpeedMph * 0.44704 * (challenge?.durationSeconds ?? 1);
+  const eventPlayerMeters = Math.max(workoutDistance - eventStartDistance, 0);
+  const eventPlayerPercent = Math.min((eventPlayerMeters / eventFinishMeters) * 100, 100);
+  const eventMonsterPercent = challenge
+    ? Math.min(((challenge.durationSeconds - challengeSeconds) / challenge.durationSeconds) * 100, 100)
+    : 0;
+  const workoutWeeklyMiles = workoutWeekMeters / metersPerMile;
+  const weeklyTargetPercent = Math.min((workoutWeeklyMiles / selectedVillainConfig.weeklyTargetMiles) * 100, 100);
+  const weekProgressPercent = Math.min(((currentTime.getDay() + currentTime.getHours() / 24) / 7) * 100, 100);
+  const monsterWeeklyMiles = selectedVillainConfig.weeklyTargetMiles * (weekProgressPercent / 100);
+  const weeklyRunnerPercent = weeklyTargetPercent / 2;
+  const weeklyUserPositionPercent = 50 + weeklyRunnerPercent;
+  const weeklyChaseGap = Math.max(weeklyUserPositionPercent - weekProgressPercent, 0);
+  const weeklyChaseIntensity = Math.min(Math.max((40 - weeklyChaseGap) / 40, 0), 1);
+  const recordedWeeklyOutcome = weeklyChaseResults.wins > 0
+    ? "win"
+    : weeklyChaseResults.losses > 0
+      ? "loss"
+      : null;
+  const weeklyOutcome = recordedWeeklyOutcome ?? (weeklyTargetPercent >= 100
+    ? "win"
+    : weekProgressPercent >= weeklyUserPositionPercent
+      ? "loss"
+      : null);
+  const weeklyUserWidth = `${weeklyUserPositionPercent}%` as `${number}%`;
+  const weeklyRunnerFillWidth = `${weeklyRunnerPercent}%` as `${number}%`;
+  const weeklyMonsterWidth = `${weekProgressPercent}%` as `${number}%`;
+  const eventPlayerWidth = `${eventPlayerPercent}%` as `${number}%`;
+  const eventMonsterWidth = `${eventMonsterPercent}%` as `${number}%`;
+  const villainUrl = selectedVillainConfig.image;
+  const currentMileageLabel = `${totalMiles.toFixed(1)}/${nextThreshold.toFixed(1)} mi`;
   const currentLevelLabel = `${currentThreshold.toFixed(1)} mi`;
   const nextLevelLabel = `${nextThreshold.toFixed(1)} mi`;
   const formattedTime = `${String(Math.floor(elapsedSeconds / 60)).padStart(2, "0")}:${String(
@@ -294,119 +465,305 @@ export default function Index() {
             : healthStatus === "not-supported"
               ? "Apple Health is available on iPhone"
           : "Apple Health not connected";
+  const challengeCountdownLabel = challenge
+    ? `${String(Math.floor(challengeSeconds / 60)).padStart(2, "0")}:${String(challengeSeconds % 60).padStart(2, "0")}`
+    : "00:00";
+  const displayedChallenge = challenge ?? { ...getDailyChallenge(), status: "offered" as const };
+
+  useEffect(() => {
+    if (weeklyOutcome) {
+      chaserMotion.stopAnimation(() => chaserMotion.setValue(0));
+      return;
+    }
+
+    const duration = Math.round(600 - weeklyChaseIntensity * 360);
+    const animation = Animated.loop(
+      Animated.sequence([
+        Animated.timing(chaserMotion, { toValue: 1, duration, useNativeDriver: true }),
+        Animated.timing(chaserMotion, { toValue: 0, duration, useNativeDriver: true }),
+      ]),
+    );
+
+    animation.start();
+    return () => animation.stop();
+  }, [chaserMotion, weeklyChaseIntensity, weeklyOutcome]);
+
+  useEffect(() => {
+    if (!weeklyOutcome) {
+      return;
+    }
+
+    void recordWeeklyChaseResult(selectedVillain, weeklyOutcome).then(() => {
+      getWeeklyChaseResults(selectedVillain).then(setWeeklyChaseResults);
+    });
+  }, [selectedVillain, weeklyOutcome]);
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <ScrollView contentContainerStyle={styles.container}>
-        <View style={styles.header}>
-          <Text style={styles.eyebrow}>QUESTTFIT / LIVE SESSION</Text>
-          <Text style={styles.title}>Move with purpose.</Text>
-          <Text style={styles.subtitle}>
-            Use your iPhone&apos;s location to measure the ground you cover.
-          </Text>
-        </View>
+      <ImageBackground
+  source={require("../../assets/images/forest-background.png")}
+  resizeMode="cover"
+  style={styles.backgroundImage}
+  imageStyle={styles.backgroundImageStyle}
+>
+        <View style={styles.backgroundOverlay}>
+          <ScrollView contentContainerStyle={styles.container}>
+            <View style={styles.brandLockup}>
+              <Text style={styles.brandName}>QuestFit</Text>
+              <Text style={styles.brandTagline}>RUN · ESCAPE · GET STRONGER</Text>
+            </View>
 
-        <View style={styles.distancePanel}>
-          <View style={styles.statusRow}>
-            <View style={[styles.statusDot, isTracking && styles.statusDotActive]} />
-            <Text style={styles.statusText}>{isTracking ? "TRACKING NOW" : "READY TO TRACK"}</Text>
-          </View>
-          <Text style={styles.distanceValue}>{formattedDistance}</Text>
-          <Text style={styles.distanceUnit}>KILOMETERS</Text>
-          <Text style={styles.secondaryDistance}>{formattedFeet} feet · {formattedMiles} miles</Text>
-        </View>
+            <View style={styles.heroRow}>
+              <View style={styles.distancePanel}>
+                <View style={styles.cardEyebrowRow}>
+                  <Text style={styles.cardIcon}>⌁</Text>
+                  <Text style={styles.cardEyebrow}>DISTANCE</Text>
+                </View>
+                <Text style={styles.distanceValue}>{dailyMiles.toFixed(2)}</Text>
+                <Text style={styles.distanceUnit}>MILES</Text>
+                <View style={styles.distanceSummaryRow}>
+                  <Text numberOfLines={1} style={styles.distanceSummaryText}>WEEK {weeklyMiles.toFixed(2)} mi</Text>
+                  <Text numberOfLines={1} style={styles.distanceSummaryText}>LIFE {lifetimeMiles.toFixed(2)} mi</Text>
+                </View>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => router.push("/stats")}
+                  style={({ pressed }) => [styles.statsButton, pressed && styles.buttonPressed]}
+                >
+                  <Text style={styles.statsButtonText}>VIEW STATS</Text>
+                  <Text style={styles.statsButtonArrow}>→</Text>
+                </Pressable>
+              </View>
+
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Choose your chaser"
+              onPress={() => setShowChaserPicker(true)}
+              style={styles.chaserHeroCard}
+            >
+              <Image source={villainUrl} style={styles.chaserHeroImage} contentFit="cover" contentPosition="center" />
+              <View pointerEvents="none" style={[styles.chaserHeroScrim, selectedVillain === "werewolf" && styles.chaserHeroScrimWerewolf]} />
+              <View style={styles.chaserHeroContent}>
+                <Text style={styles.cardEyebrow}>YOUR CHASER</Text>
+                <View>
+                  <Text style={styles.chaserHeroName}>{selectedVillainConfig.label}</Text>
+                  <Text style={styles.chaserHeroLabel}>{selectedVillainConfig.difficulty} CHASER</Text>
+                  <Text style={styles.chaserHeroDistance}>{selectedVillainConfig.sprintSpeedMph} mph sprint</Text>
+                  <Text style={styles.chaserHeroWeekly}>{selectedVillainConfig.weeklyTargetMiles} mi weekly target</Text>
+                </View>
+                <Text style={styles.chaserTapHint}>TAP TO CHOOSE</Text>
+              </View>
+              </Pressable>
+            </View>
+
+            <View style={styles.sessionStatus}>
+              <View style={[styles.statusDot, isTracking && styles.statusDotActive]} />
+              <Text style={styles.statusText}>{isTracking ? "TRACKING NOW" : "READY TO TRACK"}</Text>
+            </View>
 
         <View style={styles.levelProgressCard}>
+          <View style={styles.glassCardHeader}>
+            <View>
+              <Text style={styles.cardEyebrow}>RUN PROGRESS</Text>
+              <Text style={styles.cardTitle}>MILES TO NEXT LEVEL</Text>
+            </View>
+            <View style={styles.levelHeaderActions}>
+              <Pressable onPress={() => setShowRunnerPicker(true)} style={styles.runnerEditButton}>
+                <Text style={styles.runnerEditText}>EDIT RUNNER</Text>
+              </Pressable>
+              <View style={styles.levelBadge}>
+                <Text style={styles.levelBadgeText}>LVL {currentLevel}</Text>
+              </View>
+            </View>
+          </View>
+
           <View style={styles.levelProgressMeta}>
             <View style={styles.levelProgressSide}>
-              <Text style={styles.levelProgressLabel}>lvl.{currentLevel}</Text>
+              <Text style={styles.levelProgressLabel}>LVL {currentLevel}</Text>
               <Text style={styles.levelProgressSubLabel}>{currentLevelLabel}</Text>
             </View>
-            <View style={styles.levelProgressSide}>
-              <Text style={styles.levelProgressLabel}>lvl.{nextLevel}</Text>
+            <View style={[styles.levelProgressSide, { alignItems: "flex-end" }]}>
+              <Text style={styles.levelProgressLabel}>LVL {nextLevel}</Text>
               <Text style={styles.levelProgressSubLabel}>{nextLevelLabel}</Text>
             </View>
           </View>
-          <View style={styles.progressTrackWrap}>
-            <View style={[styles.chaserMarker, { left: villainProgressWidth }]}>
-              <Image
-                accessibilityLabel={`${selectedVillainConfig.label} chasing your avatar`}
-                cachePolicy="disk"
-                contentFit="cover"
-                source={villainUrl}
-                style={styles.markerImage}
-                transition={250}
-              />
+
+          <View accessibilityLabel="Level progress" style={styles.progressTrackWrap}>
+            <View style={styles.progressTrack}>
+              <View style={[styles.progressFill, { width: progressWidth }]} />
             </View>
             <Animated.View
               style={[
-                styles.avatarMarker,
+                styles.runnerMarker,
                 { left: progressWidth },
                 {
                   transform: [
-                    { translateY: avatarMotion.interpolate({ inputRange: [0, 1], outputRange: [0, -4] }) },
-                    { rotate: avatarMotion.interpolate({ inputRange: [0, 1], outputRange: ["-5deg", "5deg"] }) },
+                    { translateY: runnerMotion.interpolate({ inputRange: [0, 1], outputRange: [0, -4] }) },
+                    { rotate: runnerMotion.interpolate({ inputRange: [0, 1], outputRange: ["-5deg", "5deg"] }) },
+                  ],
+                },
+              ]}
+            >
+              <Text accessibilityLabel="Your selected running QuestFit runner" style={styles.runnerGlyph}>
+                {runnerCustomization.runner}
+              </Text>
+            </Animated.View>
+          </View>
+
+          <Text style={styles.levelProgressReadout}>{currentMileageLabel}</Text>
+        </View>
+
+        <View style={styles.weeklyChaseCard}>
+          <View style={styles.glassCardHeader}>
+            <View>
+              <Text style={styles.cardEyebrow}>WEEKLY CHASE</Text>
+              <Text style={styles.cardTitle}>{selectedVillainConfig.label} TARGET</Text>
+            </View>
+            <Text style={styles.weeklyChaseReset}>BEAT {weeklyChaseResults.wins} · LOST {weeklyChaseResults.losses}</Text>
+          </View>
+          <View style={styles.weeklyChaseLabels}>
+            <Text style={styles.levelProgressLabel}>{selectedVillainConfig.label} 0 mi</Text>
+            <Text style={styles.levelProgressLabel}>YOU 0 mi</Text>
+            <Text style={styles.levelProgressLabel}>{selectedVillainConfig.weeklyTargetMiles} mi</Text>
+          </View>
+          <View style={styles.weeklyChaseTrackWrap}>
+            <View style={[styles.progressTrack, styles.weeklyChaseTrack]}>
+              <View style={[styles.weeklyChaseMonsterFill, { width: weeklyMonsterWidth }]} />
+              <View style={[styles.weeklyChaseRunnerFill, { width: weeklyRunnerFillWidth }]} />
+            </View>
+            <View style={[styles.weeklyUserMarker, { left: weeklyUserWidth }]}>
+              <Text style={styles.runnerRaceGlyph}>{runnerCustomization.runner}</Text>
+            </View>
+            <Animated.View
+              style={[
+                styles.weeklyChaseMarker,
+                { left: weeklyMonsterWidth },
+                {
+                  transform: [
+                    { translateX: chaserMotion.interpolate({ inputRange: [0, 1], outputRange: [0, 2 + weeklyChaseIntensity * 6] }) },
+                    { translateY: chaserMotion.interpolate({ inputRange: [0, 1], outputRange: [0, -(1 + weeklyChaseIntensity * 5)] }) },
+                    { rotate: chaserMotion.interpolate({ inputRange: [0, 1], outputRange: ["0deg", `${2 + weeklyChaseIntensity * 8}deg`] }) },
+                    { scale: chaserMotion.interpolate({ inputRange: [0, 1], outputRange: [1, 1 + weeklyChaseIntensity * 0.1] }) },
                   ],
                 },
               ]}
             >
               <Image
-                accessibilityLabel="Your customized running QuesttFit avatar"
-                cachePolicy="disk"
-                contentFit="cover"
-                source={avatarUrl}
-                style={styles.markerImage}
-                transition={250}
+                source={villainUrl}
+                style={styles.weeklyChaseMarkerImage}
+                contentFit="contain"
               />
             </Animated.View>
-            <View style={styles.progressTrack}>
-              <View style={[styles.progressFill, { width: progressWidth }]} />
-            </View>
           </View>
-          <Text style={styles.levelProgressReadout}>{currentMileageLabel} / {nextLevelLabel}</Text>
+          <View style={styles.weeklyChaseReadoutRow}>
+            <Text style={styles.weeklyChaseReadout}>{selectedVillainConfig.label} {monsterWeeklyMiles.toFixed(2)} mi</Text>
+            <Text style={styles.weeklyChaseReadout}>YOU {workoutWeeklyMiles.toFixed(2)} mi</Text>
+          </View>
+          {weeklyOutcome && (
+            <Text style={[styles.weeklyChaseOutcome, weeklyOutcome === "win" ? styles.weeklyChaseOutcomeWin : styles.weeklyChaseOutcomeLoss]}>
+              {weeklyOutcome === "win" ? "YOU WON!" : "YOU LOST!"}
+            </Text>
+          )}
         </View>
 
-        <View style={styles.villainTile}>
-          <View style={styles.villainTileHeader}>
+        <View style={styles.workoutCard}>
+          <View style={styles.glassCardHeader}>
             <View>
-              <Text style={styles.villainTileLabel}>CHOOSE YOUR CHASER</Text>
-              <Text style={styles.villainTileTitle}>{selectedVillainConfig.label} IS CLOSING IN</Text>
+              <Text style={styles.cardEyebrow}>CURRENT WORKOUT</Text>
+              <Text style={styles.cardTitle}>DISTANCE SINCE START</Text>
             </View>
-            <Text style={styles.villainTileDistance}>{villainProgressPercent}%</Text>
+            <Text style={styles.workoutStatus}>{isTracking ? "LIVE" : "READY"}</Text>
           </View>
-          <View style={styles.villainChoices}>
-            {(Object.keys(villains) as VillainKey[]).map((villainKey) => {
-              const villain = villains[villainKey];
-              const isSelected = villainKey === selectedVillain;
-              const choiceUrl = `https://api.dicebear.com/9.x/adventurer/png?size=72&seed=${villain.seed}&backgroundColor=${villain.background}&hairColor=${villain.color}`;
-
-              return (
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityState={{ selected: isSelected }}
-                  key={villainKey}
-                  onPress={() => setSelectedVillain(villainKey)}
-                  style={[styles.villainChoice, isSelected && styles.villainChoiceSelected]}
-                >
-                  <Image source={choiceUrl} style={styles.villainChoiceImage} contentFit="cover" />
-                  <Text style={[styles.villainChoiceLabel, isSelected && styles.villainChoiceLabelSelected]}>
-                    {villain.label}
-                  </Text>
-                </Pressable>
-              );
-            })}
+          <View style={styles.workoutDistanceRow}>
+            <View>
+              <Text style={styles.workoutDistanceValue}>{formattedWorkoutMiles}</Text>
+              <Text style={styles.workoutDistanceUnit}>MILES</Text>
+            </View>
+            <View style={styles.workoutMeta}>
+              <Text style={styles.workoutTime}>{formattedTime}</Text>
+              <Text style={styles.workoutTimeLabel}>ELAPSED</Text>
+            </View>
           </View>
+          {isTracking ? (
+            <View style={styles.workoutActionRow}>
+              <Pressable
+                accessibilityRole="button"
+                disabled={isLoading}
+                onPress={pauseTracking}
+                style={({ pressed }) => [styles.workoutActionButton, styles.pauseButton, pressed && styles.buttonPressed]}
+              >
+                <Text style={styles.startRunIcon}>Ⅱ</Text>
+                <Text style={styles.workoutActionText}>PAUSE</Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                disabled={isLoading}
+                onPress={stopTracking}
+                style={({ pressed }) => [styles.workoutActionButton, styles.stopButton, pressed && styles.buttonPressed]}
+              >
+                <Text style={styles.workoutActionText}>STOP</Text>
+              </Pressable>
+            </View>
+          ) : isPaused ? (
+            <View style={styles.workoutActionRow}>
+              <Pressable
+                accessibilityRole="button"
+                disabled={isLoading}
+                onPress={startTracking}
+                style={({ pressed }) => [styles.workoutActionButton, styles.resumeButton, pressed && styles.buttonPressed]}
+              >
+                <Text style={styles.startRunIcon}>▶</Text>
+                <Text style={styles.workoutActionText}>START</Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                disabled={isLoading}
+                onPress={stopTracking}
+                style={({ pressed }) => [styles.workoutActionButton, styles.stopButton, pressed && styles.buttonPressed]}
+              >
+                <Text style={styles.workoutActionText}>STOP</Text>
+              </Pressable>
+            </View>
+          ) : (
+            <Pressable
+              accessibilityRole="button"
+              disabled={isLoading}
+              onPress={startTracking}
+              style={({ pressed }) => [styles.startRunButton, pressed && styles.buttonPressed]}
+            >
+              {isLoading ? <ActivityIndicator color="#e7f6c9" /> : <>
+                <Text style={styles.startRunIcon}>▶</Text>
+                <Text style={styles.startRunText}>Start Run</Text>
+                <Text style={styles.startRunArrow}>→</Text>
+              </>}
+            </Pressable>
+          )}
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => router.push("/past-workouts")}
+            style={({ pressed }) => [styles.workoutStatsButton, pressed && styles.buttonPressed]}
+          >
+            <Text style={styles.workoutStatsButtonText}>VIEW PAST WORKOUTS →</Text>
+          </Pressable>
         </View>
 
-        <View style={styles.statsRow}>
-          <View style={styles.statBlock}>
-            <Text style={styles.statLabel}>TIME</Text>
-            <Text style={styles.statValue}>{formattedTime}</Text>
+        <View style={styles.challengePreviewCard}>
+          <Text style={styles.challengeStreakBadge}>STREAK {challengeStreak.current} · BEST {challengeStreak.highest}</Text>
+          <View style={styles.challengePreviewIcon}>
+            <Text style={styles.challengePreviewIconText}>◎</Text>
           </View>
-          <View style={styles.statBlock}>
-            <Text style={styles.statLabel}>GPS ACCURACY</Text>
-            <Text style={styles.statValue}>{accuracy === null ? "--" : `${Math.round(accuracy)} m`}</Text>
+          <View style={styles.challengePreviewCopy}>
+            <Text style={styles.challengeEyebrow}>TODAY&apos;S CHALLENGE</Text>
+            <Text style={styles.challengeTitle}>{displayedChallenge.title}</Text>
+            <Text style={styles.challengeDetail}>{displayedChallenge.detail}</Text>
           </View>
+          <Pressable
+            accessibilityRole="button"
+            onPress={challenge ? (challenge.status === "offered" ? acceptChallenge : skipChallenge) : acceptChallenge}
+            style={({ pressed }) => [styles.challengeArrowButton, pressed && styles.buttonPressed]}
+          >
+            <Text style={styles.challengeArrow}>→</Text>
+          </Pressable>
         </View>
 
         <View style={styles.healthRow}>
@@ -423,68 +780,122 @@ export default function Index() {
 
         {errorMessage && <Text style={styles.error}>{errorMessage}</Text>}
 
-        <Pressable
-          accessibilityRole="button"
-          disabled={isLoading}
-          onPress={isTracking ? stopTracking : startTracking}
-          style={({ pressed }) => [styles.primaryButton, pressed && styles.buttonPressed]}
-        >
-          {isLoading ? (
-            <ActivityIndicator color="#10211d" />
-          ) : (
-            <Text style={styles.primaryButtonText}>{isTracking ? "PAUSE TRACKING" : "START TRACKING"}</Text>
+          </ScrollView>
+
+          {challenge && (
+            <View style={styles.challengeOverlay}>
+              <View style={styles.challengeCard}>
+                <Image source={villainUrl} style={styles.challengeVillainImage} contentFit="cover" />
+                <Text style={styles.challengeEyebrow}>
+                  {challenge.status === "active" ? "CHASE IN PROGRESS" : villainChallengeMessages[selectedVillain].cue}
+                </Text>
+                <Text style={styles.challengeTitle}>{challenge.title}</Text>
+                <Text style={styles.challengeDetail}>{challenge.detail}</Text>
+
+                {challenge.status === "active" && (
+                  <View style={styles.eventRaceSection}>
+                    <View style={styles.eventRaceLabels}>
+                      <Text style={styles.eventRaceLabel}>YOU</Text>
+                      <Text style={styles.eventRaceLabel}>FINISH</Text>
+                      <Text style={styles.eventRaceLabel}>{selectedVillainConfig.label}</Text>
+                    </View>
+                    <View style={styles.eventRaceTrackWrap}>
+                      <View style={styles.eventRaceTrack}>
+                        <View style={[styles.eventRacePlayerFill, { width: eventPlayerWidth }]} />
+                      </View>
+                      <View style={[styles.eventRacePlayerMarker, { left: eventPlayerWidth }]}>
+                        <Text style={styles.runnerRaceGlyph}>{runnerCustomization.runner}</Text>
+                      </View>
+                      <View style={[styles.eventRaceMonsterMarker, { left: eventMonsterWidth }]}>
+                        <Image source={villainUrl} style={styles.eventRaceMarkerImage} contentFit="cover" />
+                      </View>
+                    </View>
+                    <Text style={styles.eventRaceReadout}>{Math.round(eventPlayerPercent)}% of the finish distance</Text>
+                  </View>
+                )}
+
+                {challenge.status === "active" && (
+                  <View style={styles.challengeTimerWrap}>
+                    <Text style={styles.challengeTimerLabel}>RUN TIMER</Text>
+                    <Text style={styles.challengeTimerValue}>{challengeCountdownLabel}</Text>
+                  </View>
+                )}
+
+                <View style={styles.challengeActions}>
+                  {challenge.status === "offered" ? (
+                    <>
+                      <Pressable accessibilityRole="button" onPress={acceptChallenge} style={({ pressed }) => [styles.challengeActionPrimary, pressed && styles.buttonPressed]}>
+                        <Text style={styles.challengeActionPrimaryText}>RUN NOW</Text>
+                      </Pressable>
+                      <Pressable accessibilityRole="button" onPress={skipChallenge} style={({ pressed }) => [styles.challengeActionSecondary, pressed && styles.buttonPressed]}>
+                        <Text style={styles.challengeActionSecondaryText}>IGNORE</Text>
+                      </Pressable>
+                    </>
+                  ) : (
+                    <Pressable accessibilityRole="button" onPress={skipChallenge} style={({ pressed }) => [styles.challengeActionSecondary, pressed && styles.buttonPressed]}>
+                      <Text style={styles.challengeActionSecondaryText}>FINISH CHASE</Text>
+                    </Pressable>
+                  )}
+                </View>
+              </View>
+            </View>
           )}
-        </Pressable>
 
-        <Pressable
-          accessibilityRole="button"
-          disabled={isLoading || (distance === 0 && elapsedSeconds === 0)}
-          onPress={resetWorkout}
-          style={({ pressed }) => [styles.resetButton, pressed && styles.buttonPressed]}
-        >
-          <Text style={styles.resetButtonText}>RESET SESSION</Text>
-        </Pressable>
-
-        <Text style={styles.note}>
-          Tracking works while the app is open. Keep Location Services and Precise Location enabled for the most reliable measurement.
-        </Text>
-      </ScrollView>
-
-      {challenge && (
-        <View style={styles.challengeOverlay}>
-          <View style={styles.challengeCard}>
-            <Text style={styles.challengeEyebrow}>
-              {challenge.status === "active" ? "CHALLENGE IN PROGRESS" : "NEW CHALLENGE"}
-            </Text>
-            <Text style={styles.challengeTitle}>{challenge.title}</Text>
-            <Text style={styles.challengeDetail}>{challenge.detail}</Text>
-
-            {challenge.status === "active" ? (
-              <>
-                <Text style={styles.challengeCountdown}>{challengeSeconds}</Text>
-                <Text style={styles.challengeSecondsLabel}>SECONDS LEFT</Text>
-              </>
-            ) : (
-              <View style={styles.challengeActions}>
-                <Pressable
-                  accessibilityRole="button"
-                  onPress={skipChallenge}
-                  style={({ pressed }) => [styles.challengeSkipButton, pressed && styles.buttonPressed]}
-                >
-                  <Text style={styles.challengeSkipText}>SKIP</Text>
-                </Pressable>
-                <Pressable
-                  accessibilityRole="button"
-                  onPress={acceptChallenge}
-                  style={({ pressed }) => [styles.challengeAcceptButton, pressed && styles.buttonPressed]}
-                >
-                  <Text style={styles.challengeAcceptText}>ACCEPT</Text>
+          {showRunnerPicker && (
+            <View style={styles.chaserPickerOverlay}>
+              <View style={styles.chaserPickerCard}>
+                <Text style={styles.cardEyebrow}>CUSTOMIZE YOUR RUNNERS</Text>
+                <Text style={styles.cardTitle}>CHOOSE A RUNNER</Text>
+                <View style={styles.runnerPickerChoices}>
+                  {runnerOptions.map((option, index) => {
+                    const isSelected = option === runnerCustomization;
+                    return (
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityState={{ selected: isSelected }}
+                        key={`${option.label}-${index}`}
+                        onPress={() => { setRunnerCustomization(option); setShowRunnerPicker(false); }}
+                        style={[styles.runnerPickerChoice, isSelected && styles.runnerPickerChoiceSelected]}
+                      >
+                        <Text style={styles.runnerPickerGlyph}>{option.runner}</Text>
+                        <Text numberOfLines={1} style={[styles.runnerPickerLabel, isSelected && styles.runnerPickerLabelSelected]}>{option.label}</Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+                <Pressable onPress={() => setShowRunnerPicker(false)} style={styles.pickerCloseButton}>
+                  <Text style={styles.pickerCloseText}>CLOSE</Text>
                 </Pressable>
               </View>
-            )}
-          </View>
+            </View>
+          )}
+
+          {showChaserPicker && (
+            <View style={styles.chaserPickerOverlay}>
+              <View style={styles.chaserPickerCard}>
+                <Text style={styles.cardEyebrow}>CHOOSE YOUR CHASER</Text>
+                <Text style={styles.cardTitle}>SELECT YOUR NIGHTMARE</Text>
+                <View style={styles.chaserPickerChoices}>
+                  {(Object.keys(villains) as VillainKey[]).map((villainKey) => {
+                    const villain = villains[villainKey];
+                    const isSelected = villainKey === selectedVillain;
+                    return (
+                      <Pressable key={villainKey} onPress={() => { setSelectedVillain(villainKey); setShowChaserPicker(false); }} style={styles.pickerChoice}>
+                        <Image source={villain.image} style={styles.pickerChoiceImage} contentFit="cover" />
+                        <Text style={[styles.pickerChoiceLabel, isSelected && styles.pickerChoiceSelected]}>{villain.label}</Text>
+                        <Text style={styles.pickerChoiceDifficulty}>{villain.difficulty}</Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+                <Pressable onPress={() => setShowChaserPicker(false)} style={styles.pickerCloseButton}>
+                  <Text style={styles.pickerCloseText}>CLOSE</Text>
+                </Pressable>
+              </View>
+            </View>
+          )}
         </View>
-      )}
+      </ImageBackground>
     </SafeAreaView>
   );
 }
@@ -492,43 +903,246 @@ export default function Index() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: "#f3f0e8",
+    backgroundColor: "#07110e",
+  },
+  backgroundImage: {
+    flex: 1,
+  },
+  backgroundImageStyle: {
+    opacity: 0.55,
+  },
+  backgroundOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(5, 15, 12, 0.68)",
   },
   container: {
     flexGrow: 1,
-    padding: 24,
-    paddingTop: 48,
+    padding: 16,
+    paddingTop: 18,
+    paddingBottom: 28,
+  },
+  topHeader: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 18,
+  },
+  headerIconButton: {
+    alignItems: "center",
+    height: 42,
+    justifyContent: "center",
+    width: 42,
+  },
+  headerIcon: {
+    color: "#eff8ed",
+    fontSize: 30,
+    fontWeight: "300",
+  },
+  brandLockup: {
+    alignItems: "center",
+    marginBottom: 16,
+  },
+  brandName: {
+    color: "#f5f7f3",
+    fontFamily: Platform.select({ ios: "Palatino", default: "serif" }),
+    fontSize: 30,
+    fontWeight: "700",
+    letterSpacing: 0.5,
+  },
+  brandTagline: {
+    color: "rgba(235, 245, 239, 0.62)",
+    fontSize: 9,
+    fontWeight: "800",
+    letterSpacing: 2.4,
+    marginTop: 3,
+  },
+  searchRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 10,
+    marginBottom: 16,
+  },
+  searchField: {
+    alignItems: "center",
+    backgroundColor: "rgba(235, 245, 239, 0.13)",
+    borderColor: "rgba(235, 245, 239, 0.30)",
+    borderRadius: 28,
+    borderWidth: 1,
+    flex: 1,
+    flexDirection: "row",
+    height: 56,
+    paddingHorizontal: 16,
+  },
+  searchIcon: {
+    color: "#eff8ed",
+    fontSize: 31,
+    lineHeight: 34,
+    marginRight: 10,
+  },
+  searchPlaceholder: {
+    color: "rgba(235, 245, 239, 0.72)",
+    fontSize: 14,
+  },
+  filterButton: {
+    alignItems: "center",
+    backgroundColor: "rgba(235, 245, 239, 0.13)",
+    borderColor: "rgba(235, 245, 239, 0.25)",
+    borderRadius: 28,
+    borderWidth: 1,
+    height: 56,
+    justifyContent: "center",
+    width: 56,
+  },
+  filterIcon: {
+    color: "#eff8ed",
+    fontSize: 27,
+  },
+  heroRow: {
+    flexDirection: "row",
+    gap: 12,
+  },
+  cardEyebrowRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 8,
+  },
+  cardIcon: {
+    color: "#d9efc0",
+    fontSize: 25,
   },
   header: {
-    marginBottom: 32,
+    marginBottom: 20,
   },
   eyebrow: {
-    color: "#de5c38",
-    fontSize: 12,
+    color: "#c8e8a1",
+    fontSize: 11,
     fontWeight: "800",
-    letterSpacing: 1.6,
-    marginBottom: 12,
+    letterSpacing: 2.2,
+    marginBottom: 9,
   },
   title: {
-    color: "#10211d",
-    fontSize: 40,
+    color: "#f5f7f3",
+    fontSize: 34,
     fontWeight: "800",
-    letterSpacing: 0,
-    lineHeight: 44,
+    lineHeight: 40,
+    letterSpacing: -0.6,
   },
   subtitle: {
-    color: "#5e6c66",
-    fontSize: 16,
-    lineHeight: 24,
-    marginTop: 12,
+    color: "#c0ccc6",
+    fontSize: 14,
+    lineHeight: 21,
+    marginTop: 8,
     maxWidth: 340,
   },
   distancePanel: {
-    backgroundColor: "#10211d",
-    borderRadius: 18,
-    minHeight: 270,
-    padding: 24,
+    backgroundColor: "rgba(235, 245, 239, 0.10)",
+    borderColor: "rgba(235, 245, 239, 0.30)",
+    borderRadius: 24,
+    borderWidth: 1,
+    flex: 1,
+    minHeight: 218,
+    padding: 12,
     justifyContent: "center",
+    shadowColor: "#000000",
+    shadowOpacity: 0.28,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 8,
+  },
+  chaserHeroCard: {
+    backgroundColor: "rgba(235, 245, 239, 0.10)",
+    borderColor: "rgba(235, 245, 239, 0.30)",
+    borderRadius: 24,
+    borderWidth: 1,
+    flex: 1,
+    minHeight: 218,
+    overflow: "hidden",
+  },
+  chaserHeroImage: {
+    ...StyleSheet.absoluteFill,
+  },
+  chaserHeroScrim: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: "rgba(5, 15, 12, 0.38)",
+  },
+  chaserHeroScrimWerewolf: {
+    backgroundColor: "rgba(5, 15, 12, 0.26)",
+  },
+  chaserHeroContent: {
+    flex: 1,
+    justifyContent: "space-between",
+    padding: 12,
+  },
+  chaserHeroName: {
+    color: "#ffffff",
+    fontSize: 15,
+    fontWeight: "800",
+    marginTop: 2,
+  },
+  chaserHeroLabel: {
+    color: "rgba(235, 245, 239, 0.60)",
+    fontSize: 9,
+    fontWeight: "800",
+    letterSpacing: 1.4,
+    marginTop: 8,
+  },
+  chaserHeroDistance: {
+    color: "#f4f8f3",
+    fontSize: 14,
+    marginTop: 4,
+  },
+  chaserHeroWeekly: {
+    color: "#c8e8a1",
+    fontSize: 11,
+    marginTop: 4,
+  },
+  chaserTapHint: {
+    color: "#c8e8a1",
+    fontSize: 8,
+    fontWeight: "800",
+    letterSpacing: 1,
+    marginTop: 8,
+  },
+  startRunButton: {
+    alignItems: "center",
+    backgroundColor: "rgba(200, 232, 161, 0.28)",
+    borderColor: "rgba(220, 241, 197, 0.42)",
+    borderRadius: 28,
+    borderWidth: 1,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginTop: 12,
+    minHeight: 42,
+    paddingHorizontal: 11,
+  },
+  startRunIcon: {
+    color: "#f0ffdc",
+    fontSize: 19,
+  },
+  startRunText: {
+    color: "#e1f2ca",
+    flex: 1,
+    fontSize: 12,
+    fontWeight: "800",
+    marginLeft: 8,
+  },
+  startRunArrow: {
+    color: "#f0ffdc",
+    fontSize: 20,
+  },
+  sessionStatus: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 4,
+    marginTop: 10,
+    paddingHorizontal: 4,
+  },
+  sessionStatusText: {
+    color: "rgba(235, 245, 239, 0.58)",
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 1,
+    marginLeft: "auto",
   },
   statusRow: {
     alignItems: "center",
@@ -536,127 +1150,428 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   statusDot: {
-    backgroundColor: "#f6c453",
+    backgroundColor: "rgba(230, 239, 233, 0.45)",
     borderRadius: 6,
-    height: 10,
-    width: 10,
+    height: 8,
+    width: 8,
   },
   statusDotActive: {
-    backgroundColor: "#7bd6a7",
+    backgroundColor: "#c8e8a1",
   },
   statusText: {
-    color: "#c9d1cb",
-    fontSize: 12,
-    fontWeight: "800",
-    letterSpacing: 1.2,
-  },
-  distanceValue: {
-    color: "#f3f0e8",
-    fontSize: 76,
-    fontWeight: "800",
-    letterSpacing: 0,
-    lineHeight: 88,
-    marginTop: 22,
-  },
-  distanceUnit: {
-    color: "#7bd6a7",
-    fontSize: 13,
+    color: "#d9e3de",
+    fontSize: 11,
     fontWeight: "800",
     letterSpacing: 1.6,
   },
+  distanceValue: {
+    color: "#ffffff",
+    fontSize: 48,
+    fontWeight: "800",
+    letterSpacing: -1,
+    lineHeight: 54,
+    marginTop: 10,
+  },
+  distanceUnit: {
+    color: "#c8e8a1",
+    fontSize: 12,
+    fontWeight: "800",
+    letterSpacing: 2.2,
+  },
   secondaryDistance: {
-    color: "#9ea9a1",
+    color: "#b3c0b9",
+    fontSize: 13,
+    marginTop: 7,
+  },
+  distanceSummaryRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 7,
+  },
+  distanceSummaryText: {
+    color: "#b3c0b9",
+    flex: 1,
+    fontSize: 8,
+    fontWeight: "800",
+    letterSpacing: 0.2,
+    flexShrink: 0,
+  },
+  statsButton: {
+    alignItems: "center",
+    flexDirection: "row",
+    marginTop: 10,
+  },
+  statsButtonText: {
+    color: "#c8e8a1",
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 1.2,
+  },
+  statsButtonArrow: {
+    color: "#c8e8a1",
+    fontSize: 17,
+    marginLeft: 6,
+  },
+  glassCardHeader: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 18,
+  },
+  cardEyebrow: {
+    color: "rgba(235, 245, 239, 0.72)",
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 1.8,
+  },
+  cardTitle: {
+    color: "#ffffff",
     fontSize: 15,
-    marginTop: 8,
+    fontWeight: "800",
+    letterSpacing: -0.2,
+    marginTop: 5,
+  },
+  levelBadge: {
+    backgroundColor: "rgba(205, 231, 174, 0.16)",
+    borderColor: "rgba(220, 241, 197, 0.38)",
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 11,
+    paddingVertical: 7,
+  },
+  levelBadgeText: {
+    color: "#e1f2ca",
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 1,
+  },
+  dangerBadge: {
+    backgroundColor: "rgba(190, 72, 57, 0.18)",
+    borderColor: "rgba(235, 130, 111, 0.42)",
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 11,
+    paddingVertical: 7,
+  },
+  dangerBadgeText: {
+    color: "#ffb4a5",
+    fontSize: 12,
+    fontWeight: "800",
   },
   levelProgressCard: {
-    backgroundColor: "#ffffff",
-    borderRadius: 14,
-    marginTop: 12,
-    padding: 16,
+    backgroundColor: "rgba(235, 245, 239, 0.10)",
+    borderColor: "rgba(235, 245, 239, 0.28)",
+    borderRadius: 24,
+    borderWidth: 1,
+    marginTop: 14,
+    minHeight: 180,
+    padding: 14,
+    shadowColor: "#000000",
+    shadowOpacity: 0.20,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 7 },
+    elevation: 5,
   },
   levelProgressMeta: {
     flexDirection: "row",
     justifyContent: "space-between",
-    marginBottom: 10,
+    marginBottom: 6,
+  },
+  levelHeaderActions: {
+    alignItems: "flex-end",
+    gap: 6,
+  },
+  runnerEditButton: {
+    borderColor: "rgba(200, 232, 161, 0.30)",
+    borderRadius: 10,
+    borderWidth: 1,
+    paddingHorizontal: 7,
+    paddingVertical: 5,
+  },
+  runnerEditText: {
+    color: "#c8e8a1",
+    fontSize: 7,
+    fontWeight: "800",
+    letterSpacing: 0.8,
   },
   levelProgressSide: {
     alignItems: "flex-start",
   },
   levelProgressLabel: {
-    color: "#10211d",
-    fontSize: 13,
+    color: "#f3f6f3",
+    fontSize: 12,
     fontWeight: "800",
     letterSpacing: 1,
   },
   levelProgressSubLabel: {
-    color: "#7b8981",
-    fontSize: 12,
+    color: "#aebcb5",
+    fontSize: 11,
     marginTop: 4,
-  },
-  progressTrack: {
-    backgroundColor: "#ebe6dc",
-    borderRadius: 999,
-    height: 12,
-    overflow: "hidden",
   },
   progressTrackWrap: {
     justifyContent: "center",
-    minHeight: 28,
+    minHeight: 48,
     position: "relative",
+    marginTop: 4,
   },
-  avatarMarker: {
-    backgroundColor: "#ffffff",
-    borderColor: "#de5c38",
-    borderRadius: 23,
-    borderWidth: 3,
-    height: 46,
-    justifyContent: "center",
-    marginLeft: -23,
+  progressTrack: {
+    backgroundColor: "rgba(5, 15, 12, 0.62)",
+    borderColor: "rgba(235, 245, 239, 0.16)",
+    borderRadius: 999,
+    borderWidth: 1,
+    height: 12,
     overflow: "hidden",
+  },
+  runnerMarker: {
+    alignItems: "center",
+    height: 44,
+    justifyContent: "center",
+    marginLeft: -22,
     position: "absolute",
-    width: 46,
+    top: 2,
+    width: 44,
     zIndex: 2,
   },
+  runnerGlyph: {
+    fontSize: 30,
+    lineHeight: 38,
+    transform: [{ scaleX: -1 }],
+  },
   chaserMarker: {
-    backgroundColor: "#ffffff",
-    borderColor: "#10211d",
-    borderRadius: 18,
+    backgroundColor: "rgba(8, 18, 15, 0.85)",
+    borderColor: "#e87a61",
+    borderRadius: 17,
     borderWidth: 2,
-    height: 36,
+    height: 34,
     justifyContent: "center",
-    marginLeft: -18,
-    opacity: 0.9,
+    marginLeft: -17,
+    opacity: 0.96,
     overflow: "hidden",
     position: "absolute",
-    width: 36,
+    width: 34,
     zIndex: 1,
   },
-  avatarImage: {
-    height: "100%",
-    width: "100%",
-  },
-  markerImage: {
-    height: "100%",
-    width: "100%",
-  },
   progressFill: {
-    backgroundColor: "#de5c38",
+    backgroundColor: "#c8e8a1",
     borderRadius: 999,
     height: "100%",
   },
   levelProgressReadout: {
-    color: "#10211d",
-    fontSize: 12,
+    color: "#bdc9c3",
+    fontSize: 11,
     fontWeight: "800",
-    marginTop: 10,
+    marginTop: 5,
     textAlign: "center",
   },
-  villainTile: {
-    backgroundColor: "#10211d",
-    borderRadius: 14,
+  weeklyChaseCard: {
+    backgroundColor: "rgba(235, 245, 239, 0.10)",
+    borderColor: "rgba(235, 245, 239, 0.28)",
+    borderRadius: 24,
+    borderWidth: 1,
+    marginTop: 14,
+    padding: 14,
+  },
+  weeklyChaseReset: {
+    color: "#c8e8a1",
+    fontSize: 8,
+    fontWeight: "800",
+    letterSpacing: 0.8,
+  },
+  weeklyChaseLabels: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 6,
+  },
+  weeklyChaseTrackWrap: {
+    justifyContent: "center",
+    minHeight: 42,
+    position: "relative",
+  },
+  weeklyChaseTrack: {
+    width: "100%",
+  },
+  weeklyChaseMonsterFill: {
+    backgroundColor: "#d75b52",
+    borderRadius: 999,
+    height: "100%",
+    left: 0,
+    position: "absolute",
+  },
+  weeklyChaseRunnerFill: {
+    backgroundColor: "#c8e8a1",
+    borderRadius: 999,
+    height: "100%",
+    left: "50%",
+    position: "absolute",
+    zIndex: 1,
+  },
+  weeklyChaseMarker: {
+    alignItems: "center",
+    height: 40,
+    justifyContent: "center",
+    marginLeft: -20,
+    position: "absolute",
+    top: 0,
+    width: 40,
+    zIndex: 2,
+  },
+  weeklyUserMarker: {
+    alignItems: "center",
+    height: 38,
+    justifyContent: "center",
+    marginLeft: -15,
+    position: "absolute",
+    top: 2,
+    width: 30,
+    zIndex: 3,
+  },
+  weeklyChaseMarkerImage: {
+    height: "100%",
+    width: "100%",
+  },
+  runnerRaceGlyph: {
+    fontSize: 24,
+    lineHeight: 30,
+    transform: [{ scaleX: -1 }],
+  },
+  weeklyChaseReadout: {
+    color: "#bdc9c3",
+    fontSize: 10,
+    fontWeight: "800",
+    textAlign: "center",
+  },
+  weeklyChaseReadoutRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginTop: 5,
+  },
+  weeklyChaseOutcome: {
+    fontSize: 12,
+    fontWeight: "900",
+    letterSpacing: 1.2,
+    marginTop: 8,
+    textAlign: "center",
+  },
+  weeklyChaseOutcomeWin: {
+    color: "#c8e8a1",
+  },
+  weeklyChaseOutcomeLoss: {
+    color: "#f08a72",
+  },
+  workoutCard: {
+    backgroundColor: "rgba(235, 245, 239, 0.10)",
+    borderColor: "rgba(235, 245, 239, 0.28)",
+    borderRadius: 24,
+    borderWidth: 1,
+    marginTop: 14,
+    padding: 14,
+    shadowColor: "#000000",
+    shadowOpacity: 0.18,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 4,
+  },
+  workoutStatus: {
+    color: "#c8e8a1",
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 1.2,
+  },
+  workoutDistanceRow: {
+    alignItems: "flex-end",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginTop: 2,
+  },
+  workoutActionRow: {
+    flexDirection: "row",
+    gap: 10,
     marginTop: 12,
-    padding: 16,
+  },
+  workoutActionButton: {
+    alignItems: "center",
+    borderRadius: 22,
+    borderWidth: 1,
+    flex: 1,
+    flexDirection: "row",
+    height: 44,
+    justifyContent: "center",
+    paddingHorizontal: 8,
+  },
+  pauseButton: {
+    backgroundColor: "rgba(235, 190, 70, 0.82)",
+    borderColor: "#f8d875",
+  },
+  stopButton: {
+    backgroundColor: "rgba(183, 61, 52, 0.88)",
+    borderColor: "#f18b7b",
+  },
+  resumeButton: {
+    backgroundColor: "rgba(116, 181, 91, 0.88)",
+    borderColor: "#c9efaa",
+  },
+  workoutActionText: {
+    color: "#ffffff",
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 1,
+    marginLeft: 5,
+  },
+  workoutMeta: {
+    alignItems: "flex-end",
+    gap: 4,
+  },
+  workoutDistanceValue: {
+    color: "#ffffff",
+    fontSize: 34,
+    fontWeight: "800",
+    lineHeight: 38,
+  },
+  workoutDistanceUnit: {
+    color: "#c8e8a1",
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 1.8,
+  },
+  workoutTime: {
+    color: "#ffffff",
+    fontSize: 25,
+    fontWeight: "800",
+    lineHeight: 29,
+  },
+  workoutTimeLabel: {
+    color: "#c8e8a1",
+    fontSize: 9,
+    fontWeight: "800",
+    letterSpacing: 1.5,
+    marginTop: 2,
+  },
+  workoutStatsButton: {
+    alignItems: "center",
+    borderColor: "rgba(200, 232, 161, 0.28)",
+    borderRadius: 14,
+    borderWidth: 1,
+    marginTop: 10,
+    paddingVertical: 9,
+  },
+  workoutStatsButtonText: {
+    color: "#c8e8a1",
+    fontSize: 9,
+    fontWeight: "800",
+    letterSpacing: 1.1,
+  },
+  villainTile: {
+    backgroundColor: "rgba(235, 245, 239, 0.10)",
+    borderColor: "rgba(235, 245, 239, 0.28)",
+    borderRadius: 24,
+    borderWidth: 1,
+    marginTop: 14,
+    padding: 18,
+    shadowColor: "#000000",
+    shadowOpacity: 0.20,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 7 },
+    elevation: 5,
   },
   villainTileHeader: {
     alignItems: "center",
@@ -664,21 +1579,27 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
   },
   villainTileLabel: {
-    color: "#7bd6a7",
-    fontSize: 11,
+    color: "#c8e8a1",
+    fontSize: 10,
     fontWeight: "800",
-    letterSpacing: 1.2,
+    letterSpacing: 1.4,
   },
   villainTileTitle: {
-    color: "#f3f0e8",
-    fontSize: 14,
+    color: "#f5f7f3",
+    fontSize: 13,
     fontWeight: "800",
     marginTop: 5,
   },
   villainTileDistance: {
-    color: "#f6c453",
+    color: "#f08a72",
     fontSize: 20,
     fontWeight: "800",
+  },
+  viewAllText: {
+    color: "#c8e8a1",
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 0.5,
   },
   villainChoices: {
     flexDirection: "row",
@@ -687,76 +1608,131 @@ const styles = StyleSheet.create({
   },
   villainChoice: {
     alignItems: "center",
-    backgroundColor: "#1c302b",
-    borderColor: "#345048",
-    borderRadius: 10,
+    backgroundColor: "rgba(5, 15, 12, 0.28)",
+    borderColor: "rgba(235, 245, 239, 0.18)",
+    borderRadius: 15,
     borderWidth: 1,
     flex: 1,
     paddingBottom: 8,
     paddingTop: 5,
   },
   villainChoiceSelected: {
-    backgroundColor: "#de5c38",
-    borderColor: "#f6c453",
+    backgroundColor: "rgba(200, 232, 161, 0.82)",
+    borderColor: "#e0f5c8",
+  },
+  villainImageFrame: {
+    alignItems: "center",
+    backgroundColor: "rgba(235, 245, 239, 0.12)",
+    borderRadius: 12,
+    height: 58,
+    justifyContent: "center",
+    width: 58,
   },
   villainChoiceImage: {
     height: 52,
     width: 52,
   },
   villainChoiceLabel: {
-    color: "#c9d1cb",
+    color: "#c0ccc6",
     fontSize: 10,
     fontWeight: "800",
     letterSpacing: 0.6,
     marginTop: 2,
   },
   villainChoiceLabelSelected: {
-    color: "#10211d",
+    color: "#e1f2ca",
   },
-  statsRow: {
-    flexDirection: "row",
-    gap: 12,
-    marginTop: 12,
-  },
-  statBlock: {
-    backgroundColor: "#ffffff",
-    borderRadius: 14,
-    flex: 1,
-    padding: 18,
-  },
-  statLabel: {
-    color: "#7b8981",
-    fontSize: 11,
+  villainChoiceStatus: {
+    color: "rgba(235, 245, 239, 0.38)",
+    fontSize: 8,
     fontWeight: "800",
-    letterSpacing: 1.2,
+    letterSpacing: 1,
+    marginTop: 4,
   },
-  statValue: {
-    color: "#10211d",
-    fontSize: 24,
-    fontWeight: "800",
-    marginTop: 8,
+  villainChoiceStatusSelected: {
+    color: "#ffb4a5",
   },
   healthRow: {
     alignItems: "center",
-    backgroundColor: "#ffffff",
-    borderRadius: 14,
+    backgroundColor: "rgba(235, 245, 239, 0.09)",
+    borderColor: "rgba(235, 245, 239, 0.22)",
+    borderRadius: 18,
+    borderWidth: 1,
     flexDirection: "row",
     marginTop: 12,
     padding: 16,
   },
+  challengePreviewCard: {
+    alignItems: "center",
+    backgroundColor: "rgba(235, 245, 239, 0.10)",
+    borderColor: "rgba(235, 245, 239, 0.28)",
+    borderRadius: 22,
+    borderWidth: 1,
+    flexDirection: "row",
+    marginTop: 14,
+    padding: 14,
+    position: "relative",
+  },
+  challengePreviewIcon: {
+    alignItems: "center",
+    backgroundColor: "rgba(200, 232, 161, 0.15)",
+    borderRadius: 24,
+    height: 48,
+    justifyContent: "center",
+    width: 48,
+  },
+  challengePreviewIconText: {
+    color: "#dff5c4",
+    fontSize: 31,
+  },
+  challengePreviewCopy: {
+    flex: 1,
+    marginLeft: 12,
+  },
+  challengeStreakText: {
+    color: "#c8e8a1",
+    fontSize: 8,
+    fontWeight: "800",
+    letterSpacing: 0.8,
+    marginTop: 7,
+  },
+  challengeStreakBadge: {
+    color: "#c8e8a1",
+    fontSize: 8,
+    fontWeight: "800",
+    letterSpacing: 0.7,
+    position: "absolute",
+    right: 14,
+    top: 12,
+  },
+  challengeArrowButton: {
+    alignItems: "center",
+    backgroundColor: "rgba(235, 245, 239, 0.08)",
+    borderColor: "rgba(235, 245, 239, 0.14)",
+    borderRadius: 22,
+    borderWidth: 1,
+    height: 44,
+    justifyContent: "center",
+    marginLeft: 8,
+    width: 44,
+  },
+  challengeArrow: {
+    color: "#eaf5e7",
+    fontSize: 24,
+  },
   healthIcon: {
     alignItems: "center",
-    backgroundColor: "#f9dede",
+    backgroundColor: "rgba(240, 138, 114, 0.18)",
     borderRadius: 18,
     height: 36,
     justifyContent: "center",
     width: 36,
   },
   healthIconSaved: {
-    backgroundColor: "#d9f0e2",
+    backgroundColor: "rgba(200, 232, 161, 0.18)",
   },
   healthIconText: {
-    color: "#de5c38",
+    color: "#f08a72",
     fontSize: 18,
   },
   healthCopy: {
@@ -764,35 +1740,321 @@ const styles = StyleSheet.create({
     marginLeft: 12,
   },
   healthTitle: {
-    color: "#10211d",
+    color: "#f5f7f3",
     fontSize: 14,
     fontWeight: "800",
   },
   healthSubtitle: {
-    color: "#7b8981",
+    color: "#aebcb5",
     fontSize: 12,
     lineHeight: 18,
     marginTop: 3,
   },
   error: {
-    color: "#b43e2a",
+    color: "#ffb19d",
     fontSize: 14,
     lineHeight: 20,
     marginTop: 18,
   },
+  challengeCard: {
+    backgroundColor: "#371916",
+    borderColor: "rgba(240, 138, 114, 0.52)",
+    borderRadius: 22,
+    borderWidth: 1,
+    marginTop: 18,
+    padding: 18,
+    shadowColor: "#000000",
+    shadowOpacity: 0.28,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 9 },
+    elevation: 7,
+  },
+  challengeOverlay: {
+    backgroundColor: "rgba(3, 8, 6, 0.72)",
+    bottom: 0,
+    justifyContent: "center",
+    left: 0,
+    padding: 18,
+    position: "absolute",
+    right: 0,
+    top: 0,
+    zIndex: 10,
+  },
+  challengeVillainImage: {
+    alignSelf: "center",
+    borderColor: "rgba(240, 138, 114, 0.62)",
+    borderRadius: 42,
+    borderWidth: 2,
+    height: 84,
+    marginBottom: 14,
+    width: 84,
+  },
+  eventRaceSection: {
+    backgroundColor: "rgba(5, 15, 12, 0.28)",
+    borderColor: "rgba(235, 245, 239, 0.16)",
+    borderRadius: 16,
+    borderWidth: 1,
+    marginTop: 16,
+    padding: 12,
+  },
+  eventRaceLabels: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+  },
+  eventRaceLabel: {
+    color: "#c8e8a1",
+    fontSize: 8,
+    fontWeight: "800",
+    letterSpacing: 1,
+  },
+  eventRaceTrackWrap: {
+    justifyContent: "center",
+    minHeight: 44,
+    position: "relative",
+  },
+  eventRaceTrack: {
+    backgroundColor: "rgba(235, 245, 239, 0.16)",
+    borderRadius: 999,
+    height: 8,
+    overflow: "hidden",
+  },
+  eventRacePlayerFill: {
+    backgroundColor: "#c8e8a1",
+    borderRadius: 999,
+    height: "100%",
+  },
+  eventRacePlayerMarker: {
+    borderColor: "#e1f2ca",
+    borderRadius: 15,
+    borderWidth: 2,
+    height: 30,
+    marginLeft: -15,
+    overflow: "hidden",
+    position: "absolute",
+    top: 7,
+    width: 30,
+    zIndex: 2,
+  },
+  eventRaceMonsterMarker: {
+    borderColor: "#f08a72",
+    borderRadius: 15,
+    borderWidth: 2,
+    height: 30,
+    marginLeft: -15,
+    overflow: "hidden",
+    position: "absolute",
+    top: 7,
+    width: 30,
+    zIndex: 3,
+  },
+  eventRaceMarkerImage: {
+    height: "100%",
+    width: "100%",
+  },
+  eventRaceReadout: {
+    color: "#bdc9c3",
+    fontSize: 10,
+    marginTop: 5,
+    textAlign: "center",
+  },
+  chaserPickerOverlay: {
+    alignItems: "center",
+    backgroundColor: "rgba(3, 8, 6, 0.78)",
+    bottom: 0,
+    justifyContent: "center",
+    left: 0,
+    padding: 24,
+    position: "absolute",
+    right: 0,
+    top: 0,
+    zIndex: 12,
+  },
+  chaserPickerCard: {
+    backgroundColor: "#17231f",
+    borderColor: "rgba(220, 241, 197, 0.38)",
+    borderRadius: 24,
+    borderWidth: 1,
+    padding: 18,
+    width: "100%",
+  },
+  chaserPickerChoices: {
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 18,
+  },
+  pickerChoice: {
+    alignItems: "center",
+    flex: 1,
+  },
+  pickerChoiceImage: {
+    borderRadius: 32,
+    height: 64,
+    width: 64,
+  },
+  pickerChoiceLabel: {
+    color: "#c0ccc6",
+    fontSize: 9,
+    fontWeight: "800",
+    marginTop: 6,
+  },
+  pickerChoiceSelected: {
+    color: "#c8e8a1",
+  },
+  pickerChoiceDifficulty: {
+    color: "rgba(235, 245, 239, 0.58)",
+    fontSize: 8,
+    fontWeight: "800",
+    letterSpacing: 0.8,
+    marginTop: 3,
+  },
+  runnerPickerChoices: {
+    alignItems: "center",
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+    justifyContent: "center",
+    marginTop: 18,
+  },
+  runnerPickerChoice: {
+    alignItems: "center",
+    backgroundColor: "rgba(5, 15, 12, 0.28)",
+    borderColor: "rgba(235, 245, 239, 0.18)",
+    borderRadius: 15,
+    borderWidth: 1,
+    flexBasis: "17%",
+    minWidth: 54,
+    paddingBottom: 8,
+    paddingTop: 5,
+  },
+  runnerPickerChoiceSelected: {
+    backgroundColor: "rgba(200, 232, 161, 0.82)",
+    borderColor: "#e0f5c8",
+  },
+  runnerPickerGlyph: {
+    fontSize: 28,
+    lineHeight: 34,
+    transform: [{ scaleX: -1 }],
+  },
+  runnerPickerLabel: {
+    color: "#c0ccc6",
+    fontSize: 8,
+    fontWeight: "800",
+    letterSpacing: 0.3,
+    marginTop: 2,
+  },
+  runnerPickerLabelSelected: {
+    color: "#17301f",
+  },
+  pickerCloseButton: {
+    alignItems: "center",
+    borderColor: "rgba(235, 245, 239, 0.20)",
+    borderRadius: 16,
+    borderWidth: 1,
+    marginTop: 18,
+    paddingVertical: 11,
+  },
+  pickerCloseText: {
+    color: "#c8e8a1",
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 1,
+  },
+  challengeEyebrow: {
+    color: "#f08a72",
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 1.5,
+  },
+  challengeTitle: {
+    color: "#fff4ef",
+    fontSize: 23,
+    fontWeight: "800",
+    lineHeight: 29,
+    marginTop: 10,
+  },
+  challengeDetail: {
+    color: "#dbcac5",
+    fontSize: 14,
+    lineHeight: 21,
+    marginTop: 8,
+  },
+  challengeTimerWrap: {
+    alignItems: "center",
+    backgroundColor: "rgba(240, 138, 114, 0.12)",
+    borderColor: "rgba(240, 138, 114, 0.20)",
+    borderRadius: 15,
+    borderWidth: 1,
+    marginTop: 16,
+    paddingVertical: 10,
+  },
+  challengeTimerLabel: {
+    color: "#f08a72",
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 1.5,
+  },
+  challengeTimerValue: {
+    color: "#fff4ef",
+    fontSize: 30,
+    fontWeight: "800",
+    letterSpacing: 1,
+    marginTop: 4,
+  },
+  challengeActions: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 16,
+  },
+  challengeActionPrimary: {
+    backgroundColor: "#f08a72",
+    borderRadius: 999,
+    flex: 1,
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+  },
+  challengeActionPrimaryText: {
+    color: "#24100c",
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 1.2,
+    textAlign: "center",
+  },
+  challengeActionSecondary: {
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
+    borderColor: "rgba(255, 255, 255, 0.16)",
+    borderRadius: 999,
+    borderWidth: 1,
+    flex: 1,
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+  },
+  challengeActionSecondaryText: {
+    color: "#f1ddd7",
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 1.2,
+    textAlign: "center",
+  },
   primaryButton: {
     alignItems: "center",
-    backgroundColor: "#f6c453",
-    borderRadius: 12,
+    backgroundColor: "rgba(210, 239, 177, 0.92)",
+    borderColor: "rgba(235, 250, 216, 0.55)",
+    borderRadius: 16,
+    borderWidth: 1,
     justifyContent: "center",
     minHeight: 56,
     marginTop: 24,
+    shadowColor: "#000000",
+    shadowOpacity: 0.20,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 5,
   },
   primaryButtonText: {
-    color: "#10211d",
-    fontSize: 13,
+    color: "#102019",
+    fontSize: 12,
     fontWeight: "800",
-    letterSpacing: 1.1,
+    letterSpacing: 1.2,
   },
   resetButton: {
     alignItems: "center",
@@ -801,8 +2063,8 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   resetButtonText: {
-    color: "#5e6c66",
-    fontSize: 12,
+    color: "#aebcb5",
+    fontSize: 11,
     fontWeight: "800",
     letterSpacing: 1,
   },
@@ -810,95 +2072,43 @@ const styles = StyleSheet.create({
     opacity: 0.72,
   },
   note: {
-    color: "#7b8981",
-    fontSize: 12,
-    lineHeight: 18,
+    color: "#92a19a",
+    fontSize: 11,
+    lineHeight: 17,
     marginTop: 24,
     textAlign: "center",
   },
-  challengeOverlay: {
-    alignItems: "center",
-    backgroundColor: "rgba(16, 33, 29, 0.46)",
-    justifyContent: "center",
-    padding: 24,
-    position: "absolute",
-    bottom: 0,
-    left: 0,
-    right: 0,
-    top: 0,
-  },
-  challengeCard: {
-    backgroundColor: "#f3f0e8",
-    borderRadius: 18,
-    padding: 24,
-    width: "100%",
-  },
-  challengeEyebrow: {
-    color: "#de5c38",
-    fontSize: 11,
-    fontWeight: "800",
-    letterSpacing: 1.3,
-  },
-  challengeTitle: {
-    color: "#10211d",
-    fontSize: 32,
-    fontWeight: "800",
-    lineHeight: 38,
-    marginTop: 12,
-  },
-  challengeDetail: {
-    color: "#5e6c66",
-    fontSize: 16,
-    lineHeight: 24,
-    marginTop: 8,
-  },
-  challengeActions: {
-    flexDirection: "row",
-    gap: 10,
-    marginTop: 24,
-  },
-  challengeSkipButton: {
-    alignItems: "center",
-    borderColor: "#c9d1cb",
-    borderRadius: 10,
+  bottomNav: {
+    alignItems: "stretch",
+    backgroundColor: "rgba(15, 31, 24, 0.76)",
+    borderColor: "rgba(235, 245, 239, 0.24)",
+    borderRadius: 22,
     borderWidth: 1,
-    flex: 1,
-    justifyContent: "center",
-    minHeight: 52,
+    flexDirection: "row",
+    justifyContent: "space-around",
+    marginTop: 18,
+    paddingHorizontal: 6,
+    paddingVertical: 8,
   },
-  challengeSkipText: {
-    color: "#5e6c66",
-    fontSize: 12,
-    fontWeight: "800",
-    letterSpacing: 1,
-  },
-  challengeAcceptButton: {
+  bottomNavItem: {
     alignItems: "center",
-    backgroundColor: "#f6c453",
-    borderRadius: 10,
+    borderRadius: 16,
     flex: 1,
-    justifyContent: "center",
-    minHeight: 52,
+    paddingVertical: 8,
   },
-  challengeAcceptText: {
-    color: "#10211d",
-    fontSize: 12,
-    fontWeight: "800",
-    letterSpacing: 1,
+  bottomNavItemActive: {
+    backgroundColor: "rgba(200, 232, 161, 0.16)",
   },
-  challengeCountdown: {
-    color: "#10211d",
-    fontSize: 64,
-    fontWeight: "800",
-    lineHeight: 72,
-    marginTop: 24,
-    textAlign: "center",
+  bottomNavIcon: {
+    color: "rgba(235, 245, 239, 0.72)",
+    fontSize: 21,
   },
-  challengeSecondsLabel: {
-    color: "#7b8981",
-    fontSize: 11,
-    fontWeight: "800",
-    letterSpacing: 1.2,
-    textAlign: "center",
+  bottomNavLabel: {
+    color: "rgba(235, 245, 239, 0.68)",
+    fontSize: 9,
+    marginTop: 4,
+  },
+  bottomNavActiveText: {
+    color: "#dff5c4",
   },
 });

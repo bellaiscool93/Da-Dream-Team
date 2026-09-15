@@ -50,7 +50,8 @@
           "healthSharePermission": "Allow $(PRODUCT_NAME) to read your workout history from Apple Health.",
           "healthUpdatePermission": "Allow $(PRODUCT_NAME) to save tracked workouts to Apple Health."
         }
-      ]
+      ],
+      "expo-audio"
     ],
     "experiments": {
       "typedRoutes": true,
