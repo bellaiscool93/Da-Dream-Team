@@ -21,30 +21,32 @@ import { requestHealthPermissions, saveWorkoutToHealth } from "../services/healt
 const metersPerMile = 1609.344;
 const maximumAcceptedAccuracy = 100;
 const maximumAcceptedSegment = 50;
-type AvatarCustomization = {
-  skinColor: string;
-  hairColor: string;
-  clothingColor: string;
-  backgroundColor: string;
+type RunnerCustomization = {
+  label: string;
+  runner: string;
 };
 
-const defaultAvatarCustomization: AvatarCustomization = {
-  skinColor: "edb98a",
-  hairColor: "2c1b18",
-  clothingColor: "b4e36a",
-  backgroundColor: "17231f",
+const defaultRunnerCustomization: RunnerCustomization = {
+  label: "SPRINTER",
+  runner: "🏃",
 };
 
-const avatarOptions: AvatarCustomization[] = [
-  defaultAvatarCustomization,
-  { skinColor: "f8d25c", hairColor: "6b4423", clothingColor: "ef8a72", backgroundColor: "263b30" },
-  { skinColor: "ae5d29", hairColor: "1c1917", clothingColor: "8ccf82", backgroundColor: "34495e" },
-  { skinColor: "ffdbac", hairColor: "c026d3", clothingColor: "60a5fa", backgroundColor: "472b4e" },
+const runnerOptions: RunnerCustomization[] = [
+  defaultRunnerCustomization,
+  { label: "PACE", runner: "🏃🏻" },
+  { label: "GRIT", runner: "🏃🏾" },
+  { label: "NIGHT", runner: "🏃🏿" },
+  { label: "LUNA", runner: "🏃‍♀️" },
+  { label: "MAYA", runner: "🏃🏼‍♀️" },
+  { label: "ZOE", runner: "🏃🏽‍♀️" },
+  { label: "TRAIL", runner: "🏃🏽" },
+  { label: "ENDURE", runner: "🏃🏼" },
+  { label: "POWER", runner: "🏃🏾‍♂️" },
 ];
 const villains = {
-  werewolf: { label: "WEREWOLF", seed: "moon-werewolf", color: "6b7280", background: "d9f0e2", sprintSpeedMph: 6.2, weeklyTargetMiles: 5, difficulty: "EASY" },
-  witch: { label: "WITCH", seed: "night-witch", color: "7c3aed", background: "eadcff", sprintSpeedMph: 8.7, weeklyTargetMiles: 15, difficulty: "MEDIUM" },
-  vampire: { label: "VAMPIRE", seed: "crimson-vampire", color: "991b1b", background: "f9dede", sprintSpeedMph: 11.2, weeklyTargetMiles: 30, difficulty: "HARD" },
+  werewolf: { label: "WEREWOLF", image: require("../../assets/images/werewolf.png"), sprintSpeedMph: 6.2, weeklyTargetMiles: 5, difficulty: "EASY" },
+  witch: { label: "WITCH", image: require("../../assets/images/witch.png"), sprintSpeedMph: 8.7, weeklyTargetMiles: 15, difficulty: "MEDIUM" },
+  vampire: { label: "VAMPIRE", image: require("../../assets/images/vampire.png"), sprintSpeedMph: 11.2, weeklyTargetMiles: 30, difficulty: "HARD" },
 } as const;
 
 type VillainKey = keyof typeof villains;
@@ -145,11 +147,11 @@ export default function Index() {
   const [healthStatus, setHealthStatus] = useState("not-connected");
   const [selectedVillain, setSelectedVillain] = useState<VillainKey>("werewolf");
   const [showChaserPicker, setShowChaserPicker] = useState(false);
-  const [showAvatarPicker, setShowAvatarPicker] = useState(false);
+  const [showRunnerPicker, setShowRunnerPicker] = useState(false);
   const [challengeStreak, setChallengeStreak] = useState({ current: 0, highest: 0 });
   const [weeklyChaseResults, setWeeklyChaseResults] = useState({ wins: 0, losses: 0 });
-  const [avatarCustomization, setAvatarCustomization] = useState(defaultAvatarCustomization);
-  const avatarMotion = useRef(new Animated.Value(0)).current;
+  const [runnerCustomization, setRunnerCustomization] = useState(defaultRunnerCustomization);
+  const runnerMotion = useRef(new Animated.Value(0)).current;
   const [challenge, setChallenge] = useState<Challenge | null>(null);
   const [challengeSeconds, setChallengeSeconds] = useState(0);
   const [eventStartDistance, setEventStartDistance] = useState(0);
@@ -301,14 +303,14 @@ export default function Index() {
   useEffect(() => {
     const animation = Animated.loop(
       Animated.sequence([
-        Animated.timing(avatarMotion, { toValue: 1, duration: 260, useNativeDriver: true }),
-        Animated.timing(avatarMotion, { toValue: 0, duration: 260, useNativeDriver: true }),
+        Animated.timing(runnerMotion, { toValue: 1, duration: 260, useNativeDriver: true }),
+        Animated.timing(runnerMotion, { toValue: 0, duration: 260, useNativeDriver: true }),
       ]),
     );
 
     animation.start();
     return () => animation.stop();
-  }, [avatarMotion]);
+  }, [runnerMotion]);
 
   useEffect(() => {
     void setAudioModeAsync({
@@ -507,8 +509,6 @@ export default function Index() {
   const progressWidth = `${progressPercent}%` as `${number}%`;
   const villainProgressPercent = Math.max(progressPercent - 18, 0);
   const villainProgressWidth = `${villainProgressPercent}%` as `${number}%`;
-  const selectedAvatarConfig = avatarProfiles[selectedAvatar];
-  const avatarUrl = `https://api.dicebear.com/9.x/avataaars/png?size=96&seed=${selectedAvatarConfig.seed}&skinColor=${selectedAvatarConfig.skinColor}&hairColor=${selectedAvatarConfig.hairColor}&clothingColor=${selectedAvatarConfig.clothingColor}&backgroundColor=${selectedAvatarConfig.backgroundColor}`;
   const selectedVillainConfig = villains[selectedVillain];
   const eventFinishMeters = selectedVillainConfig.sprintSpeedMph * 0.44704 * (challenge?.durationSeconds ?? 1);
   const eventPlayerMeters = Math.max(workoutDistance - eventStartDistance, 0);
@@ -519,22 +519,23 @@ export default function Index() {
   const workoutWeeklyMiles = workoutWeekMeters / metersPerMile;
   const weeklyTargetPercent = Math.min((workoutWeeklyMiles / selectedVillainConfig.weeklyTargetMiles) * 100, 100);
   const weekProgressPercent = Math.min(((new Date().getDay() + new Date().getHours() / 24) / 7) * 100, 100);
-  const monsterWeeklyMiles = selectedVillainConfig.weeklyTargetMiles * (weekProgressPercent / 100);
+  const chaseDay = Math.min(new Date().getDay(), 5);
+  const weeklyChaserPercent = chaseDay * 20;
+  const monsterWeeklyMiles = selectedVillainConfig.weeklyTargetMiles * (weeklyChaserPercent / 100);
   const userIsWinning = workoutWeeklyMiles >= monsterWeeklyMiles;
   const weeklyOutcome = workoutWeeklyMiles >= selectedVillainConfig.weeklyTargetMiles
     ? "win"
     : weekProgressPercent >= 100 && workoutWeeklyMiles < selectedVillainConfig.weeklyTargetMiles
       ? "loss"
       : null;
-  const weeklyFillPercent = Math.max(weeklyTargetPercent, weekProgressPercent);
-  const weeklyUserWidth = `${weeklyTargetPercent}%` as `${number}%`;
-  const weeklyFillWidth = `${weeklyFillPercent}%` as `${number}%`;
-  const weeklyMonsterWidth = `${weekProgressPercent}%` as `${number}%`;
+  const weeklyRunnerPercent = weeklyTargetPercent / 2;
+  const weeklyUserWidth = `${50 + weeklyRunnerPercent}%` as `${number}%`;
+  const weeklyFillWidth = `${weeklyRunnerPercent}%` as `${number}%`;
+  const weeklyMonsterWidth = `${weeklyChaserPercent}%` as `${number}%`;
   const eventPlayerWidth = `${eventPlayerPercent}%` as `${number}%`;
   const eventMonsterWidth = `${eventMonsterPercent}%` as `${number}%`;
-  const avatarSeed = `questfit-runner-${avatarCustomization.skinColor}-${avatarCustomization.hairColor}-${avatarCustomization.clothingColor}`;
-  avatarUrl = `https://api.dicebear.com/9.x/avataaars/png?size=96&seed=${avatarSeed}&skinColor=${avatarCustomization.skinColor}&hairColor=${avatarCustomization.hairColor}&clothingColor=${avatarCustomization.clothingColor}&backgroundColor=${avatarCustomization.backgroundColor}`;
-  const villainUrl = `https://api.dicebear.com/9.x/adventurer/png?size=96&seed=${selectedVillainConfig.seed}&backgroundColor=${selectedVillainConfig.background}&hairColor=${selectedVillainConfig.color}`;
+  const villainUrl = selectedVillainConfig.image;
+  const chaserImageOffsetY = -20;
   const currentMileageLabel = `${totalMiles.toFixed(1)} mi`;
   const currentLevelLabel = `${currentThreshold.toFixed(1)} mi`;
   const nextLevelLabel = `${nextThreshold.toFixed(1)} mi`;
@@ -610,7 +611,7 @@ export default function Index() {
                 style={styles.chaserHeroCard}
               >
                 <Text style={styles.cardEyebrow}>YOUR CHASER</Text>
-                <Image source={villainUrl} style={styles.chaserHeroImage} contentFit="cover" />
+                <Image source={villainUrl} style={styles.chaserHeroImage} contentFit="cover" contentPosition={{ top: -30 }} />
                 <Text style={styles.chaserHeroName}>{selectedVillainConfig.label}</Text>
                 <Text style={styles.chaserHeroLabel}>{selectedVillainConfig.difficulty} CHASER</Text>
                 <Text style={styles.chaserHeroDistance}>{selectedVillainConfig.sprintSpeedMph} mph sprint</Text>
@@ -631,8 +632,8 @@ export default function Index() {
               <Text style={styles.cardTitle}>MILES TO NEXT LEVEL</Text>
             </View>
             <View style={styles.levelHeaderActions}>
-              <Pressable onPress={() => setShowAvatarPicker(true)} style={styles.avatarEditButton}>
-                <Text style={styles.avatarEditText}>EDIT AVATAR</Text>
+              <Pressable onPress={() => setShowRunnerPicker(true)} style={styles.runnerEditButton}>
+                <Text style={styles.runnerEditText}>EDIT RUNNER</Text>
               </Pressable>
               <View style={styles.levelBadge}>
                 <Text style={styles.levelBadgeText}>LVL {currentLevel}</Text>
@@ -655,17 +656,22 @@ export default function Index() {
             <View style={styles.progressTrack}>
               <View style={[styles.progressFill, { width: progressWidth }]} />
             </View>
-            <View style={[styles.avatarMarker, { left: progressWidth }]}> 
-              <Image
-                accessibilityLabel="Your customized running QuestFit avatar"
-                cachePolicy="none"
-                contentFit="cover"
-                key={avatarUrl}
-                source={avatarUrl}
-                style={styles.markerImage}
-                transition={250}
-              />
-            </View>
+            <Animated.View
+              style={[
+                styles.runnerMarker,
+                { left: progressWidth },
+                {
+                  transform: [
+                    { translateY: runnerMotion.interpolate({ inputRange: [0, 1], outputRange: [0, -4] }) },
+                    { rotate: runnerMotion.interpolate({ inputRange: [0, 1], outputRange: ["-5deg", "5deg"] }) },
+                  ],
+                },
+              ]}
+            >
+              <Text accessibilityLabel="Your selected running QuestFit runner" style={styles.runnerGlyph}>
+                {runnerCustomization.runner}
+              </Text>
+            </Animated.View>
           </View>
 
           <Text style={styles.levelProgressReadout}>{currentMileageLabel}</Text>
@@ -684,14 +690,20 @@ export default function Index() {
             <Text style={styles.levelProgressLabel}>{selectedVillainConfig.weeklyTargetMiles} mi</Text>
           </View>
           <View style={styles.weeklyChaseTrackWrap}>
-            <View style={styles.progressTrack}>
+            <View style={styles.weeklyRunnerLane}>
+              <View style={styles.progressTrack}>
               <View style={[styles.weeklyChaseFill, userIsWinning ? styles.weeklyChaseFillWinning : styles.weeklyChaseFillLosing, { width: weeklyFillWidth }]} />
+              </View>
             </View>
             <View style={[styles.weeklyUserMarker, { left: weeklyUserWidth }]}>
-              <Image source={avatarUrl} style={styles.weeklyChaseMarkerImage} contentFit="cover" />
+              <Text style={styles.runnerRaceGlyph}>{runnerCustomization.runner}</Text>
             </View>
             <View style={[styles.weeklyChaseMarker, { left: weeklyMonsterWidth }]}>
-              <Image source={villainUrl} style={styles.weeklyChaseMarkerImage} contentFit="cover" />
+              <Image
+                source={villainUrl}
+                style={[styles.weeklyChaseMarkerImage, { transform: [{ translateY: chaserImageOffsetY }] }]}
+                contentFit="cover"
+              />
             </View>
           </View>
           <View style={styles.weeklyChaseReadoutRow}>
@@ -836,7 +848,7 @@ export default function Index() {
                       <View style={[styles.eventRacePlayerFill, { width: eventPlayerWidth }]} />
                     </View>
                     <View style={[styles.eventRacePlayerMarker, { left: eventPlayerWidth }]}>
-                      <Image source={avatarUrl} style={styles.eventRaceMarkerImage} contentFit="cover" />
+                      <Text style={styles.runnerRaceGlyph}>{runnerCustomization.runner}</Text>
                     </View>
                     <View style={[styles.eventRaceMonsterMarker, { left: eventMonsterWidth }]}>
                       <Image source={villainUrl} style={styles.eventRaceMarkerImage} contentFit="cover" />
@@ -873,28 +885,29 @@ export default function Index() {
           </View>
         )}
 
-        {showAvatarPicker && (
+        {showRunnerPicker && (
           <View style={styles.chaserPickerOverlay}>
             <View style={styles.chaserPickerCard}>
-              <Text style={styles.cardEyebrow}>CUSTOMIZE YOUR AVATAR</Text>
-              <Text style={styles.cardTitle}>CHOOSE A LOOK</Text>
-              <View style={styles.avatarPickerChoices}>
-                {avatarOptions.map((option) => {
-                  const optionSeed = `questfit-runner-${option.skinColor}-${option.hairColor}-${option.clothingColor}`;
-                  const optionUrl = `https://api.dicebear.com/9.x/avataaars/png?size=96&seed=${optionSeed}&skinColor=${option.skinColor}&hairColor=${option.hairColor}&clothingColor=${option.clothingColor}&backgroundColor=${option.backgroundColor}`;
-                  const isSelected = option === avatarCustomization;
+              <Text style={styles.cardEyebrow}>CUSTOMIZE YOUR RUNNERS</Text>
+              <Text style={styles.cardTitle}>CHOOSE A RUNNER</Text>
+              <View style={styles.runnerPickerChoices}>
+                {runnerOptions.map((option, index) => {
+                  const isSelected = option === runnerCustomization;
                   return (
                     <Pressable
-                      key={optionUrl}
-                      onPress={() => { setAvatarCustomization(option); setShowAvatarPicker(false); }}
-                      style={[styles.avatarChoice, isSelected && styles.avatarChoiceSelected]}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: isSelected }}
+                      key={`${option.label}-${index}`}
+                      onPress={() => { setRunnerCustomization(option); setShowRunnerPicker(false); }}
+                      style={[styles.runnerPickerChoice, isSelected && styles.runnerPickerChoiceSelected]}
                     >
-                      <Image source={optionUrl} style={styles.avatarChoiceImage} contentFit="cover" />
+                      <Text style={styles.runnerPickerGlyph}>{option.runner}</Text>
+                      <Text style={[styles.runnerPickerLabel, isSelected && styles.runnerPickerLabelSelected]}>{option.label}</Text>
                     </Pressable>
                   );
                 })}
               </View>
-              <Pressable onPress={() => setShowAvatarPicker(false)} style={styles.pickerCloseButton}>
+              <Pressable onPress={() => setShowRunnerPicker(false)} style={styles.pickerCloseButton}>
                 <Text style={styles.pickerCloseText}>CLOSE</Text>
               </Pressable>
             </View>
@@ -912,10 +925,9 @@ export default function Index() {
                   {(Object.keys(villains) as VillainKey[]).map((villainKey) => {
                     const villain = villains[villainKey];
                     const isSelected = villainKey === selectedVillain;
-                    const choiceUrl = `https://api.dicebear.com/9.x/adventurer/png?size=72&seed=${villain.seed}&backgroundColor=${villain.background}&hairColor=${villain.color}`;
                     return (
                       <Pressable key={villainKey} onPress={() => { setSelectedVillain(villainKey); setShowChaserPicker(false); }} style={styles.pickerChoice}>
-                        <Image source={choiceUrl} style={styles.pickerChoiceImage} contentFit="cover" />
+                        <Image source={villain.image} style={styles.pickerChoiceImage} contentFit="cover" />
                         <Text style={[styles.pickerChoiceLabel, isSelected && styles.pickerChoiceSelected]}>{villain.label}</Text>
                         <Text style={styles.pickerChoiceDifficulty}>{villain.difficulty}</Text>
                       </Pressable>
@@ -1304,14 +1316,14 @@ const styles = StyleSheet.create({
     alignItems: "flex-end",
     gap: 6,
   },
-  avatarEditButton: {
+  runnerEditButton: {
     borderColor: "rgba(200, 232, 161, 0.30)",
     borderRadius: 10,
     borderWidth: 1,
     paddingHorizontal: 7,
     paddingVertical: 5,
   },
-  avatarEditText: {
+  runnerEditText: {
     color: "#c8e8a1",
     fontSize: 7,
     fontWeight: "800",
@@ -1345,34 +1357,20 @@ const styles = StyleSheet.create({
     height: 12,
     overflow: "hidden",
   },
-  avatarMarker: {
-    backgroundColor: "rgba(8, 18, 15, 0.85)",
-    borderColor: "#d7f2b5",
-    borderRadius: 21,
-    borderWidth: 2,
-    height: 42,
-    justifyContent: "center",
-    marginLeft: -21,
-    overflow: "hidden",
-    position: "absolute",
-    top: 3,
-    width: 42,
-    zIndex: 2,
-    
-  },
   runnerMarker: {
     alignItems: "center",
     height: 44,
     justifyContent: "center",
     marginLeft: -22,
     position: "absolute",
+    top: 2,
     width: 44,
     zIndex: 2,
   },
   runnerGlyph: {
     fontSize: 30,
     lineHeight: 38,
-    transform: [{scaleX: -1}],
+    transform: [{ scaleX: -1 }],
   },
   chaserMarker: {
     backgroundColor: "rgba(8, 18, 15, 0.85)",
@@ -1387,14 +1385,6 @@ const styles = StyleSheet.create({
     position: "absolute",
     width: 34,
     zIndex: 1,
-  },
-  avatarImage: {
-    height: "100%",
-    width: "100%",
-  },
-  markerImage: {
-    height: "100%",
-    width: "100%",
   },
   progressFill: {
     backgroundColor: "#c8e8a1",
@@ -1426,11 +1416,17 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     marginBottom: 6,
+    paddingLeft: "50%",
   },
   weeklyChaseTrackWrap: {
     justifyContent: "center",
     minHeight: 42,
     position: "relative",
+  },
+  weeklyRunnerLane: {
+    left: "50%",
+    position: "absolute",
+    right: 0,
   },
   weeklyChaseFill: {
     borderRadius: 999,
@@ -1443,32 +1439,38 @@ const styles = StyleSheet.create({
     backgroundColor: "#f08a72",
   },
   weeklyChaseMarker: {
+    alignItems: "center",
+    backgroundColor: "rgba(8, 18, 15, 0.82)",
     borderColor: "#f08a72",
-    borderRadius: 15,
+    borderRadius: 4,
     borderWidth: 2,
-    height: 30,
-    marginLeft: -15,
+    height: 34,
+    justifyContent: "center",
+    marginLeft: -17,
     overflow: "hidden",
     position: "absolute",
-    top: 6,
-    width: 30,
+    top: 4,
+    width: 34,
     zIndex: 2,
   },
   weeklyUserMarker: {
-    borderColor: "#d7f2b5",
-    borderRadius: 15,
-    borderWidth: 2,
-    height: 30,
+    alignItems: "center",
+    height: 38,
+    justifyContent: "center",
     marginLeft: -15,
-    overflow: "hidden",
     position: "absolute",
-    top: 6,
+    top: 2,
     width: 30,
     zIndex: 3,
   },
   weeklyChaseMarkerImage: {
     height: "100%",
     width: "100%",
+  },
+  runnerRaceGlyph: {
+    fontSize: 24,
+    lineHeight: 30,
+    transform: [{ scaleX: -1 }],
   },
   weeklyChaseReadout: {
     color: "#bdc9c3",
@@ -1930,29 +1932,43 @@ const styles = StyleSheet.create({
     letterSpacing: 0.8,
     marginTop: 3,
   },
-  avatarPickerChoices: {
+  runnerPickerChoices: {
+    alignItems: "center",
     flexDirection: "row",
+    flexWrap: "wrap",
     gap: 10,
     justifyContent: "center",
     marginTop: 18,
   },
-  avatarChoice: {
+  runnerPickerChoice: {
     alignItems: "center",
-    borderColor: "rgba(235, 245, 239, 0.16)",
-    borderRadius: 34,
+    backgroundColor: "rgba(5, 15, 12, 0.28)",
+    borderColor: "rgba(235, 245, 239, 0.18)",
+    borderRadius: 15,
     borderWidth: 1,
-    height: 68,
-    justifyContent: "center",
-    width: 68,
+    flexBasis: "17%",
+    minWidth: 54,
+    paddingBottom: 8,
+    paddingTop: 5,
   },
-  avatarChoiceSelected: {
-    borderColor: "#c8e8a1",
-    borderWidth: 2,
+  runnerPickerChoiceSelected: {
+    backgroundColor: "rgba(200, 232, 161, 0.82)",
+    borderColor: "#e0f5c8",
   },
-  avatarChoiceImage: {
-    borderRadius: 28,
-    height: 60,
-    width: 60,
+  runnerPickerGlyph: {
+    fontSize: 28,
+    lineHeight: 34,
+    transform: [{ scaleX: -1 }],
+  },
+  runnerPickerLabel: {
+    color: "#c0ccc6",
+    fontSize: 9,
+    fontWeight: "800",
+    letterSpacing: 0.5,
+    marginTop: 2,
+  },
+  runnerPickerLabelSelected: {
+    color: "#17301f",
   },
   pickerCloseButton: {
     alignItems: "center",
