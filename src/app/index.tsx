@@ -533,7 +533,7 @@ export default function Index() {
   const eventPlayerWidth = `${eventPlayerPercent}%` as `${number}%`;
   const eventMonsterWidth = `${eventMonsterPercent}%` as `${number}%`;
   const avatarSeed = `questfit-runner-${avatarCustomization.skinColor}-${avatarCustomization.hairColor}-${avatarCustomization.clothingColor}`;
-  const avatarUrl = `https://api.dicebear.com/9.x/avataaars/png?size=96&seed=${avatarSeed}&skinColor=${avatarCustomization.skinColor}&hairColor=${avatarCustomization.hairColor}&clothingColor=${avatarCustomization.clothingColor}&backgroundColor=${avatarCustomization.backgroundColor}`;
+  avatarUrl = `https://api.dicebear.com/9.x/avataaars/png?size=96&seed=${avatarSeed}&skinColor=${avatarCustomization.skinColor}&hairColor=${avatarCustomization.hairColor}&clothingColor=${avatarCustomization.clothingColor}&backgroundColor=${avatarCustomization.backgroundColor}`;
   const villainUrl = `https://api.dicebear.com/9.x/adventurer/png?size=96&seed=${selectedVillainConfig.seed}&backgroundColor=${selectedVillainConfig.background}&hairColor=${selectedVillainConfig.color}`;
   const currentMileageLabel = `${totalMiles.toFixed(1)} mi`;
   const currentLevelLabel = `${currentThreshold.toFixed(1)} mi`;
